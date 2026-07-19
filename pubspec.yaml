@@ -1,0 +1,31 @@
+name: json_page
+description: >-
+  A reusable Flutter page renderer that fetches and renders a page JSON file
+  (e.g. home.json, apps.json) through a Riverpod provider. Supports image,
+  cameraSet, and sizebox items, pull-to-refresh, and error/retry states.
+version: 0.1.0
+
+# The following line prevents the package from being accidentally published to
+# pub.dev using `flutter pub publish`. Remove it (and set publish_to) when you
+# are ready to publish.
+publish_to: 'none'
+
+environment:
+  sdk: ">=3.12.0 <4.0.0"
+  flutter: ">=3.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  flutter_riverpod: ^2.6.1
+  http: ^1.2.1
+  url_launcher: ^6.3.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
