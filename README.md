@@ -11,12 +11,14 @@
 - `title` (ไม่บังคับ) จะแสดงบน appBar ชั่วคราวก่อนเปลี่ยนเส้นทาง
 - `type` = "route"
 - `route` คือชื่อ route ที่ต้องการไป (เช่น `"/about"`)
+- `routeArgs` (ไม่บังคับ) คือ Map ของ arguments ที่จะส่งไปกับ route (เช่น `{"id": 123}`)
 - การนำทางจริงทำโดย host ผ่าน callback `onRoute` ของ `RenderView` (ไลบรารีไม่รู้จักตาราง route ของแอป) ตัวอย่างใน host:
 
 ```dart
 RenderView(
   url: 'https://example.com/about.json',
-  onRoute: (context, route) => Navigator.of(context).pushNamed(route),
+  onRoute: (context, route, {routeArgs}) =>
+      Navigator.of(context).pushNamed(route, arguments: routeArgs),
 )
 ```
 
@@ -25,7 +27,8 @@ RenderView(
 {
   "title": "เฝ้าระวังน้ำท่วม",
 	"type": "route",
-	"route": "/about"
+	"route": "/about",
+	"routeArgs": {"id": 123}
 }
 ```
 
@@ -57,7 +60,16 @@ RenderView(
 			"type": "image",
 			"children": [
 				{
-					"image": "https://hatyaicityclimate.org/upload/img/banner-scccrn-800w-01.png"
+					"image": "https://hatyaicityclimate.org/upload/img/banner-scccrn-800w-01.png",
+					"webViewUrl": "",
+					"url": "", // Url ภายนอก
+					"webViewUrl": "", // String?	URL ให้ เปิดใน in-app web view เมื่อแตะรูป
+					"route": "", // String?	ชื่อ named route (เช่น "/about") ให้ นำทางในแอป เมื่อแตะรูป
+					"routeArgs": "", // Map<String, dynamic>?	arguments ที่ส่งไปกับ route
+					"title": "", // String?	ชื่อเรื่อง ใช้เป็น title ของ web view / target ที่เปิด
+					"height": "", // double?	ความสูงของรูป (หน่วย pixel)
+					"width": "", // double?	ความกว้างของรูป (หน่วย pixel)
+					"borderRadius": "", // double?	รัศมีมุมโค้งของรูป (ใช้กับ child นี้โดยเฉพาะ)
 				},
 				...
 			]
@@ -69,7 +81,9 @@ RenderView(
 				{
 					"title": "Camera title",
 					"code": "R01",
-					"name": "radartmd"
+					"name": "radartmd",
+					"code: "",
+					"name": "", // String?	มีในโมเดล แต่ใช้กับ cameraSet เป็นหลัก (ไม่มีผลกับ image)
 				},
 				...
 			]
