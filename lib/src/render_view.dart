@@ -18,6 +18,10 @@ import 'package:json_page/src/providers/page_provider.dart';
 /// The renderer is decoupled from any host-specific navigation: when a feed
 /// item is tapped it invokes [onLinkTap] with a [LinkTarget] so the host can
 /// decide how to navigate (named route, in-app web view, external launch, ...).
+///
+/// When the page config declares `type: "route"`, the renderer invokes
+/// [onRoute] with the configured route name so the host can navigate to its
+/// own named route (the library does not know the host's route table).
 class RenderView extends ConsumerWidget {
   const RenderView({
     super.key,
@@ -27,6 +31,7 @@ class RenderView extends ConsumerWidget {
     this.logo,
     this.actions,
     this.onLinkTap,
+    this.onRoute,
   });
 
   /// JSON URL to fetch and render (e.g. `https://example.com/home.json`).
@@ -46,6 +51,11 @@ class RenderView extends ConsumerWidget {
 
   /// Called when a tappable feed item is tapped. When null, taps are ignored.
   final void Function(BuildContext context, LinkTarget target)? onLinkTap;
+
+  /// Called when the page config declares `type: "route"`. The host should
+  /// navigate to the given named [route] (e.g. via `Navigator.pushNamed`).
+  /// When null, route configs are ignored.
+  final void Function(BuildContext context, String route)? onRoute;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -87,14 +97,50 @@ class RenderView extends ConsumerWidget {
             message: error.toString(),
             onRetry: () => ref.read(pageProvider(url).notifier).refresh(),
           ),
-          data: (data) => _RenderList(
-            widget: data.widget,
-            onLinkTap: onLinkTap,
-            onRefresh: () => ref.read(pageProvider(url).notifier).refresh(),
-          ),
+          data: (data) => _renderByType(context, data, ref),
         ),
       ),
     );
+  }
+
+  /// Dispatches rendering to one of the three top-level render formats.
+  Widget _renderByType(BuildContext context, PageConfig data, WidgetRef ref) {
+    switch (data.type) {
+      case 'route':
+        // Redirect to a named route instead of rendering a widget.
+        final String? route = data.route;
+        if (route != null && route.isNotEmpty) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (context.mounted) onRoute?.call(context, route);
+          });
+        }
+        return const Center(child: CircularProgressIndicator());
+
+      case 'webview':
+        // Render an in-app web view from the top-level `url`.
+        final String? url = data.url;
+        if (url == null || url.isEmpty) {
+          return const Center(child: Text('ไม่มีข้อมูลในขณะนี้'));
+        }
+        return RenderWebviewWidget(
+          item: PageItem(
+            type: 'webview',
+            // The page AppBar already shows the title, so omit the inner one.
+            title: null,
+            url: url,
+            children: const [],
+          ),
+        );
+
+      case 'widget':
+      default:
+        // Render the list of widgets.
+        return _RenderList(
+          widget: data.widget,
+          onLinkTap: onLinkTap,
+          onRefresh: () => ref.read(pageProvider(url).notifier).refresh(),
+        );
+    }
   }
 }
 

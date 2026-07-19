@@ -3,62 +3,88 @@ import 'package:flutter/material.dart';
 /// Data model for a page config, parsed from a page JSON file
 /// (e.g. `home.json`, `apps.json`).
 ///
-/// JSON shape (see `.github/instructions`):
+/// A page config has two starting attributes at the top level:
+///   - `title`: shown on the app bar.
+///   - `type`: the main render format. Currently one of:
+///       * `"route"`   — redirect to a named route (see [route]).
+///       * `"widget"`  — render a list of widgets (see [widget]).
+///       * `"webview"` — render an in-app web view (see [url]).
+///
+/// Example (webview):
 /// {
-///   "title": "...",
-///   "onLoadUrl": "https://...",   // optional: pinged (non-blocking) on load
-///   "widget": {
-///     "show": "itemA,itemB,...",
-///     "cameraPhoto": "...",
-///     "cameraLastPhoto": "...",
-///     "cameraRealtimePhoto": "...",
-///     "items": { "itemA": { "type": "image", "children": [ ... ] }, ... }
-///   }
+///   "title": "เฝ้าระวังน้ำท่วม",
+///   "type": "webview",
+///   "url": "https://hatyaicityclimate.org"
 /// }
 class PageConfig {
-  const PageConfig({required this.title, required this.widget, this.onLoadUrl});
+  const PageConfig({
+    required this.type,
+    required this.title,
+    required this.widget,
+    this.route,
+    this.url,
+    this.onLoadUrl,
+  });
 
   factory PageConfig.fromJson(Map<String, dynamic> json) {
-    final Map<String, dynamic>? widgetJson =
-        json['widget'] as Map<String, dynamic>?;
+    // The main render type is normally a top-level `type` attribute (per the
+    // README). When it is absent, auto-detect: a config that carries a
+    // `widget` (legacy nested) or `widgets` (new top-level) object is treated
+    // as a `widget` page so existing server JSON keeps rendering.
+    String type = (json['type'] as String? ?? '').trim();
+    if (type.isEmpty) {
+      final bool hasWidget =
+          json['widget'] is Map<String, dynamic> ||
+          json['widgets'] is Map<String, dynamic>;
+      type = hasWidget ? 'widget' : '';
+    }
 
-    // Support a flat, single-item page where `type`/`url`/`title` live at the
-    // root (no `widget`/`show`/`items` wrapper). Normalize it into a synthetic
-    // widget so the rest of the rendering pipeline is unchanged.
-    final PageWidget widget;
-    if (widgetJson != null && widgetJson.isNotEmpty) {
-      widget = PageWidget.fromJson(widgetJson);
-    } else if (json['type'] != null) {
-      const String rootKey = '_root';
-      widget = PageWidget(
-        show: const [rootKey],
-        cameraPhoto: '',
-        cameraLastPhoto: '',
-        cameraRealtimePhoto: '',
-        items: <String, PageItem>{
-          rootKey: PageItem(
-            type: json['type'] as String? ?? '',
-            // The title is shown by the page AppBar, so omit it here to avoid a
-            // second (inner) AppBar inside the web view.
-            title: null,
-            url: json['url'] as String?,
-            children: const [],
-          ),
-        },
-      );
-    } else {
-      widget = PageWidget.fromJson(const <String, dynamic>{});
+    String? route;
+    String? url;
+    PageWidget widget;
+
+    switch (type) {
+      case 'route':
+        // Redirect to a named route; no widget to render.
+        route = json['route'] as String?;
+        widget = const PageWidget.empty();
+      case 'webview':
+        // Open an in-app web view from the top-level `url`.
+        url = json['url'] as String?;
+        widget = const PageWidget.empty();
+      case 'widget':
+        // Render a list of widgets from the top-level `widgets` field.
+        widget = PageWidget.fromJson(json);
+      default:
+        // Unknown type: render nothing.
+        widget = const PageWidget.empty();
     }
 
     return PageConfig(
+      type: type,
       title: json['title'] as String? ?? '',
       widget: widget,
+      route: route,
+      url: url,
       onLoadUrl: json['onLoadUrl'] as String?,
     );
   }
 
+  /// Main render format: `route` / `widget` / `webview`.
+  final String type;
+
+  /// Title shown on the app bar.
   final String title;
+
+  /// Widget list to render (used when [type] is `widget`).
   final PageWidget widget;
+
+  /// Named route to redirect to (used when [type] is `route`). The host
+  /// performs the actual navigation via the [RenderView.onRoute] callback.
+  final String? route;
+
+  /// Web URL to open (used when [type] is `webview`).
+  final String? url;
 
   /// Optional URL pinged (non-blocking) when this page JSON is loaded.
   final String? onLoadUrl;
@@ -73,25 +99,38 @@ class PageWidget {
     required this.items,
   });
 
+  /// Empty widget list, used by non-`widget` page types.
+  const PageWidget.empty()
+    : show = const [],
+      cameraPhoto = '',
+      cameraLastPhoto = '',
+      cameraRealtimePhoto = '',
+      items = const {};
+
   factory PageWidget.fromJson(Map<String, dynamic> json) {
-    final Map<String, dynamic> rawItems =
-        json['items'] as Map<String, dynamic>? ?? {};
-    final Map<String, PageItem> items = rawItems.map(
+    // The widget fields (`show`, `cameraPhoto*`) and the item map live either
+    // at the top level (new format) or inside a nested `widget` object
+    // (legacy format). The item map is `widgets` (new) or `items` (legacy).
+    final Map<String, dynamic> src =
+        (json['widget'] as Map<String, dynamic>?) ?? json;
+    final Map<String, dynamic>? rawItems =
+        (json['widgets'] as Map<String, dynamic>?) ??
+        (src['items'] as Map<String, dynamic>?);
+    final Map<String, PageItem> items = (rawItems ?? {}).map(
       (key, value) => MapEntry(
         key,
         PageItem.fromJson(value as Map<String, dynamic>? ?? {}),
       ),
     );
-
     return PageWidget(
-      show: (json['show'] as String? ?? '')
+      show: (src['show'] as String? ?? '')
           .split(',')
           .map((e) => e.trim())
           .where((e) => e.isNotEmpty)
           .toList(),
-      cameraPhoto: json['cameraPhoto'] as String? ?? '',
-      cameraLastPhoto: json['cameraLastPhoto'] as String? ?? '',
-      cameraRealtimePhoto: json['cameraRealtimePhoto'] as String? ?? '',
+      cameraPhoto: src['cameraPhoto'] as String? ?? '',
+      cameraLastPhoto: src['cameraLastPhoto'] as String? ?? '',
+      cameraRealtimePhoto: src['cameraRealtimePhoto'] as String? ?? '',
       items: items,
     );
   }
