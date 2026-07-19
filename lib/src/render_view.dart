@@ -33,6 +33,7 @@ class RenderView extends ConsumerWidget {
     this.actions,
     this.onLinkTap,
     this.onRoute,
+    this.routeBuilder,
   });
 
   /// JSON URL to fetch and render (e.g. `https://example.com/home.json`).
@@ -57,12 +58,32 @@ class RenderView extends ConsumerWidget {
   /// navigate to the given named [route] (e.g. via `Navigator.pushNamed`),
   /// optionally passing [routeArgs] as the route arguments. When null, route
   /// configs are ignored.
+  ///
+  /// This is only used as a fallback: when [routeBuilder] is provided and
+  /// returns a non-null widget, that widget is rendered inline (keeping this
+  /// page's AppBar and the host's main navigation) instead of pushing a
+  /// full-screen route.
   final void Function(
     BuildContext context,
     String route, {
     Map<String, dynamic>? routeArgs,
   })?
   onRoute;
+
+  /// Builds the content of a named [route] to render **inline** inside this
+  /// page (so the page's AppBar and the host's main navigation stay visible).
+  /// Used when the page config declares `type: "route"`.
+  ///
+  /// Return a non-null widget to render it inline; return `null` (or omit this)
+  /// to fall back to [onRoute] (which pushes a full-screen named route). The
+  /// host typically maps [route] to one of its own screens in `embedded` mode
+  /// (a body-only widget without its own Scaffold/AppBar).
+  final Widget? Function(
+    BuildContext context,
+    String route, {
+    Map<String, dynamic>? routeArgs,
+  })?
+  routeBuilder;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -74,14 +95,11 @@ class RenderView extends ConsumerWidget {
         automaticallyImplyLeading: false,
         title: Row(
           children: [
-            if (logo != null)
-              SizedBox(
-                height: 36,
-                child: Padding(
-                  padding: const EdgeInsets.only(right: 8),
-                  child: logo,
-                ),
-              ),
+            feed.when(
+              data: (data) => _AppBarLogo(jsonLogo: data.logo, hostLogo: logo),
+              loading: () => _AppBarLogo(hostLogo: logo),
+              error: (_, _) => _AppBarLogo(hostLogo: logo),
+            ),
             Expanded(
               child: feed.when(
                 data: (data) => Text(
@@ -114,10 +132,21 @@ class RenderView extends ConsumerWidget {
   Widget _renderByType(BuildContext context, PageConfig data, WidgetRef ref) {
     switch (data.type) {
       case 'route':
-        // Redirect to a named route instead of rendering a widget.
+        // Render a named route inline (keeping this page's AppBar and the
+        // otherwise fall back to [onRoute], which pushes a full-screen route.
         final String? route = data.route;
         final Map<String, dynamic>? routeArgs = data.routeArgs;
         if (route != null && route.isNotEmpty) {
+          if (routeBuilder != null) {
+            final Widget? built = routeBuilder!(
+              context,
+              route,
+              routeArgs: routeArgs,
+            );
+            if (built != null) {
+              return built;
+            }
+          }
           WidgetsBinding.instance.addPostFrameCallback((_) {
             if (context.mounted) {
               onRoute?.call(context, route, routeArgs: routeArgs);
@@ -251,5 +280,42 @@ class _RenderError extends StatelessWidget {
         ),
       ),
     );
+  }
+}
+
+/// App-bar logo that prefers the logo declared by the page JSON ([jsonLogo]).
+///
+/// When the JSON supplies a logo URL it overrides the host-provided [hostLogo]
+/// (which is only used as a fallback when the JSON has none). A `http(s)` URL
+/// is loaded over the network; any other non-empty string is treated as a
+/// local asset path. Returns an empty widget when no logo is available.
+class _AppBarLogo extends StatelessWidget {
+  const _AppBarLogo({this.jsonLogo, this.hostLogo});
+
+  final String? jsonLogo;
+  final Widget? hostLogo;
+
+  @override
+  Widget build(BuildContext context) {
+    final String? logoUrl = jsonLogo?.trim();
+    if (logoUrl != null && logoUrl.isNotEmpty) {
+      final Widget image = logoUrl.startsWith('http')
+          ? Image.network(logoUrl, fit: BoxFit.contain)
+          : Image.asset(logoUrl, fit: BoxFit.contain);
+      return SizedBox(
+        height: 36,
+        child: Padding(padding: const EdgeInsets.only(right: 8), child: image),
+      );
+    }
+    if (hostLogo != null) {
+      return SizedBox(
+        height: 36,
+        child: Padding(
+          padding: const EdgeInsets.only(right: 8),
+          child: hostLogo,
+        ),
+      );
+    }
+    return const SizedBox.shrink();
   }
 }

@@ -24,6 +24,7 @@ class PageConfig {
     this.route,
     this.routeArgs,
     this.url,
+    this.logo,
     this.onLoadUrl,
   });
 
@@ -70,6 +71,7 @@ class PageConfig {
       widget: widget,
       route: route,
       routeArgs: routeArgs,
+      logo: json['logo'] as String?,
       url: url,
       onLoadUrl: json['onLoadUrl'] as String?,
     );
@@ -96,6 +98,11 @@ class PageConfig {
   /// Web URL to open (used when [type] is `webview`).
   final String? url;
 
+  /// Optional logo URL shown in the app bar. When present, it overrides the
+  /// host-provided [RenderView.logo] so the page can supply its own logo.
+  final String? logo;
+
+  /// Optional
   /// Optional URL pinged (non-blocking) when this page JSON is loaded.
   final String? onLoadUrl;
 }
