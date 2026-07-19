@@ -1,0 +1,131 @@
+# HatyaiCityClimate — Project Context (for GitHub Copilot)
+
+# Flutter Project Rules & Context
+
+## Project Overview
+- Tech Stack: Flutter (Dart)
+- State Management: Riverpod with @riverpod code generation
+- Target Platforms: Android/iOS
+- Rules: 
+  1. Do not explain the theory. 
+  2. Return ONLY clean code.
+  3. Ensure code uses Provider pattern.
+
+## Dart & Flutter Best Practices
+- Use `const` constructors on widgets as much as possible for performance optimization.
+- Prefer explicit type annotations for public APIs and local variables where context isn't obvious.
+- Keep the widget tree clean: Extract complex sub-trees into separate stateless/stateful widgets instead of large inline helper methods.
+- Follow Effective Dart guidelines (e.g., place `dart:` imports before `package:` imports, then relative imports, sorted alphabetically).
+
+## Architecture & Code Style
+- Follow Clean Architecture: Separate layers into Data, Domain, and Presentation.
+- UI Layer: Separate UI layout from Business Logic.
+- State-driven UI: Widgets should strictly react to states. Avoid placing logic inside `setState` or UI methods.
+- Error Handling: Always catch exceptions explicitly using try-catch blocks and log them appropriately (do not leave catch blocks empty).
+
+## Multi-Model Usage Note (Hy3 & Claude)
+- When generating code, prioritize clean, modular, and highly testable Dart code.
+- Avoid deprecated Flutter APIs. Ensure compliance with the latest Flutter SDK version.
+
+## ระบบงาน (Business Flow)
+- แสดงภาพที่ได้รับจาก IP Camera หลายแหล่ง โดยภาพจะเก็บอยู่ที่ server ของเว็บ https://hatyaicityclimate.org
+- เมื่อมีภาพใหม่เข้าที่ server จะนำภาพนั้นมาแสดงเร็วที่สุดเท่าที่จะทำได้
+- การแสดงภาพจะจัดเป็นกลุ่มของกล้อง โดย config จะได้จาก server
+
+## โครงสร้างสำคัญ
+
+- การ render หน้าจอให้อ่านไฟล์ json จากเว็บเพื่อนำมา render ตามลำดับของ widget.show
+- Feed ดึงข้อมูลจาก ไฟล์ home.json
+
+## โครงสร้างของ json สำหรับ render
+  - title คือ ชื่อสำหรับแสดงบน appBar
+  - widget คือ ชิ้นส่วนสำหรับแสดงบนหน้า feed
+  - show คือ element ที่จะนำมาแสดงตามลำดับ
+  - cameraPhoto คือ url หลักที่เก็บภาพจากกล้องสำหรับนำมาแสดง
+  - cameraLastPhoto คือ folder สำหรับเก็บภาพล่าสุด
+  - cameraRealtimePhoto คือ folder สำหรับเก็บภาพ realtime ทุก 1 นาที
+  - items คือ รายการ element ที่ระบุใน show
+  - type คือ รูปแบบการนำมาแสดง
+    - image คือการภาพจาก children หากมีรายการเดียว ให้แสดงภาพเต็มหน้าจอ หากมีมากกว่า 1 ภาพให้แสดงเรียงแนวนอน
+    - cameraSet คือการแสดงภาพจากกล้อง โดยดึงภาพจาก url ตามรูปแบบ cameraPhoto+cameraLastPhoto+
+
+### รูปแบบข้อมูล JSON
+```
+  {
+    "title": "เฝ้าระวังน้ำท่วม",
+    "widget": {
+      "show": "scccrnBanner,donate,mainSponsor,cameraRadar,cameraHatyai",
+      "cameraPhoto": "https://hatyaicityclimate.org/floodphoto/",
+      "cameraLastPhoto": "last/",
+      "cameraRealtimePhoto": "realtime/",
+      "items" : {
+        "scccrnBanner": {
+          "type": "image",
+          "children": [
+            {
+              "image": "https://hatyaicityclimate.org/upload/img/banner-scccrn-800w-01.png"
+            }
+          ]
+        },
+        "donate": {
+          "type": "image",
+          "children": [
+            {
+              "image": "https://hatyaicityclimate.org/upload/img/donate-02-800w.jpg",
+              "url": "https://hatyaicityclimate.org/donate"
+            }
+          ]
+        },
+        "mainSponsor": {
+          "type": "image",
+          "children": [
+            {
+              "image": "https://hatyaicityclimate.org/upload/img/logo-sponsor-main.png"
+            },
+            {
+              "image": "https://hatyaicityclimate.org/upload/img/logo-inet.png"
+            },
+            {
+              "image": "https://hatyaicityclimate.org/upload/img/logo-pt.png"
+            },
+            {
+              "image": "https://hatyaicityclimate.org/upload/img/logo-chatthong.png"
+            }
+          ]
+        },
+        "cameraRadar": {
+          "type": "cameraSet",
+  				"title": "เรดาร์",
+          "children": [
+            {
+              "title": "เรดาห์สิงพระ(สงขลา)",
+              "code": "R01",
+              "name": "radartmd"
+            },
+            {
+              "title": "ภาพถ่ายดาวเทียม",
+              "code": "R02",
+              "name": "weather"
+            }
+          ]
+        },
+        "cameraHatyai": {
+          "type": "cameraSet",
+  				"title": "เทศบาลนครหาดใหญ่",
+          "children": [
+            {
+              "title": "สะพานม่วงก็อง",
+              "code": "S1",
+              "name": "muangkong"
+            },
+            {
+              "title": "อุโมงค์กัลยาณมิตร",
+              "code": "S13",
+              "name": "kalyanamit"
+            }
+          ]
+        }
+      }
+    }
+  }
+  ```
