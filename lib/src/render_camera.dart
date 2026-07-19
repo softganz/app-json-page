@@ -170,12 +170,16 @@ class _RenderCameraWidgetState extends State<RenderCameraWidget> {
     Future<void> onTap(PageChild child) async {
       final void Function(BuildContext, LinkTarget)? handler = widget.onLinkTap;
       if (handler == null) return;
-      // A `page` navigates to a named route in the app (e.g. "/about").
-      final String? page = child.page;
-      if (page != null && page.isNotEmpty) {
+      // A `route` navigates to a named route in the app (e.g. "/about").
+      final String? route = child.route;
+      if (route != null && route.isNotEmpty) {
         handler(
           context,
-          LinkTarget(page: page, pageArgs: child.pageArgs, title: child.title),
+          LinkTarget(
+            route: route,
+            routeArgs: child.routeArgs,
+            title: child.title,
+          ),
         );
         return;
       }

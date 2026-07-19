@@ -207,12 +207,16 @@ class _ImageTile extends StatelessWidget {
   Future<void> _onTap(BuildContext context) async {
     final void Function(BuildContext, LinkTarget)? handler = onLinkTap;
     if (handler == null) return;
-    // A `page` navigates to a named route in the app (e.g. "/about").
-    final String? page = child.page;
-    if (page != null && page.isNotEmpty) {
+    // A `route` navigates to a named route in the app (e.g. "/about").
+    final String? route = child.route;
+    if (route != null && route.isNotEmpty) {
       handler(
         context,
-        LinkTarget(page: page, pageArgs: child.pageArgs, title: child.title),
+        LinkTarget(
+          route: route,
+          routeArgs: child.routeArgs,
+          title: child.title,
+        ),
       );
       return;
     }
@@ -257,7 +261,7 @@ class _ImageTile extends StatelessWidget {
         : ClipRRect(borderRadius: BorderRadius.circular(radius), child: body);
 
     final bool tappable =
-        (child.page != null && child.page!.isNotEmpty) ||
+        (child.route != null && child.route!.isNotEmpty) ||
         (child.url != null && child.url!.isNotEmpty) ||
         (child.webViewUrl != null && child.webViewUrl!.isNotEmpty);
 

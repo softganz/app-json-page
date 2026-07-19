@@ -22,6 +22,7 @@ class PageConfig {
     required this.title,
     required this.widget,
     this.route,
+    this.routeArgs,
     this.url,
     this.onLoadUrl,
   });
@@ -40,6 +41,7 @@ class PageConfig {
     }
 
     String? route;
+    Map<String, dynamic>? routeArgs;
     String? url;
     PageWidget widget;
 
@@ -47,6 +49,8 @@ class PageConfig {
       case 'route':
         // Redirect to a named route; no widget to render.
         route = json['route'] as String?;
+        routeArgs = (json['routeArgs'] as Map<String, dynamic>?)
+            ?.cast<String, dynamic>();
         widget = const PageWidget.empty();
       case 'webview':
         // Open an in-app web view from the top-level `url`.
@@ -65,6 +69,7 @@ class PageConfig {
       title: json['title'] as String? ?? '',
       widget: widget,
       route: route,
+      routeArgs: routeArgs,
       url: url,
       onLoadUrl: json['onLoadUrl'] as String?,
     );
@@ -82,6 +87,11 @@ class PageConfig {
   /// Named route to redirect to (used when [type] is `route`). The host
   /// performs the actual navigation via the [RenderView.onRoute] callback.
   final String? route;
+
+  /// Optional arguments passed to the route (used when [type] is `route`).
+  /// Forwarded to the host via the [RenderView.onRoute] callback so the host
+  /// can pass them to `Navigator.pushNamed(route, arguments: routeArgs)`.
+  final Map<String, dynamic>? routeArgs;
 
   /// Web URL to open (used when [type] is `webview`).
   final String? url;
@@ -218,8 +228,8 @@ class PageChild {
     this.image,
     this.url,
     this.webViewUrl,
-    this.page,
-    this.pageArgs,
+    this.route,
+    this.routeArgs,
     this.title,
     this.code,
     this.name,
@@ -233,8 +243,8 @@ class PageChild {
       image: json['image'] as String?,
       url: json['url'] as String?,
       webViewUrl: json['webViewUrl'] as String?,
-      page: json['page'] as String?,
-      pageArgs: json['pageArgs'] as Map<String, dynamic>?,
+      route: json['route'] as String?,
+      routeArgs: json['routeArgs'] as Map<String, dynamic>?,
       title: json['title'] as String?,
       code: json['code'] as String?,
       name: json['name'] as String?,
@@ -249,10 +259,10 @@ class PageChild {
   final String? webViewUrl;
 
   /// Named route to navigate to when the child is tapped (e.g. "/about").
-  final String? page;
+  final String? route;
 
   /// Optional arguments passed to the route (e.g. {"url": "...", "title": "..."}).
-  final Map<String, dynamic>? pageArgs;
+  final Map<String, dynamic>? routeArgs;
   final String? title;
   final String? code;
   final String? name;
@@ -279,18 +289,18 @@ int? _toInt(dynamic value) {
 /// navigation implementation.
 class LinkTarget {
   const LinkTarget({
-    this.page,
-    this.pageArgs,
+    this.route,
+    this.routeArgs,
     this.webViewUrl,
     this.url,
     this.title,
   });
 
   /// Named route to navigate to (e.g. "/about").
-  final String? page;
+  final String? route;
 
   /// Optional arguments passed to the route.
-  final Map<String, dynamic>? pageArgs;
+  final Map<String, dynamic>? routeArgs;
 
   /// URL to open in an in-app web view.
   final String? webViewUrl;

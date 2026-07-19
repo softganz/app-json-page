@@ -20,8 +20,9 @@ import 'package:json_page/src/providers/page_provider.dart';
 /// decide how to navigate (named route, in-app web view, external launch, ...).
 ///
 /// When the page config declares `type: "route"`, the renderer invokes
-/// [onRoute] with the configured route name so the host can navigate to its
-/// own named route (the library does not know the host's route table).
+/// [onRoute] with the configured route name (and optional [routeArgs]) so the
+/// host can navigate to its own named route (the library does not know the
+/// host's route table).
 class RenderView extends ConsumerWidget {
   const RenderView({
     super.key,
@@ -53,9 +54,15 @@ class RenderView extends ConsumerWidget {
   final void Function(BuildContext context, LinkTarget target)? onLinkTap;
 
   /// Called when the page config declares `type: "route"`. The host should
-  /// navigate to the given named [route] (e.g. via `Navigator.pushNamed`).
-  /// When null, route configs are ignored.
-  final void Function(BuildContext context, String route)? onRoute;
+  /// navigate to the given named [route] (e.g. via `Navigator.pushNamed`),
+  /// optionally passing [routeArgs] as the route arguments. When null, route
+  /// configs are ignored.
+  final void Function(
+    BuildContext context,
+    String route, {
+    Map<String, dynamic>? routeArgs,
+  })?
+  onRoute;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -109,9 +116,12 @@ class RenderView extends ConsumerWidget {
       case 'route':
         // Redirect to a named route instead of rendering a widget.
         final String? route = data.route;
+        final Map<String, dynamic>? routeArgs = data.routeArgs;
         if (route != null && route.isNotEmpty) {
           WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (context.mounted) onRoute?.call(context, route);
+            if (context.mounted) {
+              onRoute?.call(context, route, routeArgs: routeArgs);
+            }
           });
         }
         return const Center(child: CircularProgressIndicator());
