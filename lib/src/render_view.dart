@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:json_page/src/render_camera.dart';
 import 'package:json_page/src/render_image.dart';
 import 'package:json_page/src/render_sidebox.dart';
+import 'package:json_page/src/render_webview.dart';
 import 'package:json_page/src/models/page_model.dart';
 import 'package:json_page/src/providers/page_provider.dart';
 
@@ -143,6 +144,10 @@ class _RenderList extends StatelessWidget {
               ),
             ),
           );
+        case 'webView':
+          tiles.add(
+            _withPadding(item.padding, RenderWebviewWidget(item: item)),
+          );
         default:
           break;
       }
@@ -150,6 +155,14 @@ class _RenderList extends StatelessWidget {
 
     if (tiles.isEmpty) {
       return const Center(child: Text('ไม่มีข้อมูลในขณะนี้'));
+    }
+
+    // A single full-screen web view must not be wrapped in a scrollable
+    // `ListView`: the parent would intercept the vertical drag gesture and the
+    // inner web view could no longer scroll its own content. Other single
+    // tiles keep the `ListView` so they can still scroll if taller than screen.
+    if (tiles.length == 1 && tiles.single is RenderWebviewWidget) {
+      return tiles.single;
     }
 
     return RefreshIndicator(

@@ -12,3 +12,4 @@ export 'src/render_view.dart';
 export 'src/render_image.dart';
 export 'src/render_camera.dart';
 export 'src/render_sidebox.dart';
+export 'src/render_webview.dart';

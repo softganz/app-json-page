@@ -19,11 +19,40 @@ class PageConfig {
   const PageConfig({required this.title, required this.widget, this.onLoadUrl});
 
   factory PageConfig.fromJson(Map<String, dynamic> json) {
+    final Map<String, dynamic>? widgetJson =
+        json['widget'] as Map<String, dynamic>?;
+
+    // Support a flat, single-item page where `type`/`url`/`title` live at the
+    // root (no `widget`/`show`/`items` wrapper). Normalize it into a synthetic
+    // widget so the rest of the rendering pipeline is unchanged.
+    final PageWidget widget;
+    if (widgetJson != null && widgetJson.isNotEmpty) {
+      widget = PageWidget.fromJson(widgetJson);
+    } else if (json['type'] != null) {
+      const String rootKey = '_root';
+      widget = PageWidget(
+        show: const [rootKey],
+        cameraPhoto: '',
+        cameraLastPhoto: '',
+        cameraRealtimePhoto: '',
+        items: <String, PageItem>{
+          rootKey: PageItem(
+            type: json['type'] as String? ?? '',
+            // The title is shown by the page AppBar, so omit it here to avoid a
+            // second (inner) AppBar inside the web view.
+            title: null,
+            url: json['url'] as String?,
+            children: const [],
+          ),
+        },
+      );
+    } else {
+      widget = PageWidget.fromJson(const <String, dynamic>{});
+    }
+
     return PageConfig(
       title: json['title'] as String? ?? '',
-      widget: PageWidget.fromJson(
-        json['widget'] as Map<String, dynamic>? ?? {},
-      ),
+      widget: widget,
       onLoadUrl: json['onLoadUrl'] as String?,
     );
   }
@@ -79,6 +108,7 @@ class PageItem {
   const PageItem({
     required this.type,
     this.title,
+    this.url,
     required this.children,
     this.padding,
     this.layout,
@@ -98,6 +128,7 @@ class PageItem {
     return PageItem(
       type: json['type'] as String? ?? '',
       title: json['title'] as String?,
+      url: json['url'] as String?,
       children: children,
       padding: _parsePadding(json['padding']),
       layout: json['layout'] as String?,
@@ -111,6 +142,9 @@ class PageItem {
 
   final String type;
   final String? title;
+
+  /// Optional item-level URL (e.g. used by `type: webView`).
+  final String? url;
   final List<PageChild> children;
   final EdgeInsets? padding;
   final String? layout;
