@@ -198,6 +198,7 @@ class PageItem {
     this.photoWidth,
     this.photoBorderRadius,
     this.photoHeight,
+    this.wrap = false,
   });
 
   factory PageItem.fromJson(Map<String, dynamic> json) {
@@ -217,6 +218,7 @@ class PageItem {
       columns: _toInt(json['columns']),
       photoWidth: json['photoWidth'] as String?,
       photoHeight: json['photoHeight'] as String?,
+      wrap: json['wrap'] as bool? ?? false,
       photoBorderRadius: _toDouble(json['photoBorderRadius']),
     );
   }
@@ -233,6 +235,10 @@ class PageItem {
   final int? columns;
   final double? photoBorderRadius;
   final String? photoWidth;
+
+  /// When true, the image row wraps to the next line when it exceeds the
+  /// screen width (instead of scrolling horizontally). Defaults to false.
+  final bool wrap;
   final String? photoHeight;
 }
 
@@ -267,6 +273,8 @@ class PageChild {
     this.name,
     this.height,
     this.width,
+    this.photoWidth,
+    this.photoHeight,
     this.borderRadius,
   });
 
@@ -282,6 +290,8 @@ class PageChild {
       name: json['name'] as String?,
       height: _toDouble(json['height']),
       width: _toDouble(json['width']),
+      photoWidth: json['photoWidth'] as String?,
+      photoHeight: json['photoHeight'] as String?,
       borderRadius: _toDouble(json['borderRadius']),
     );
   }
@@ -300,6 +310,16 @@ class PageChild {
   final String? name;
   final double? height;
   final double? width;
+
+  /// Per-child image width, mirroring the item-level `photoWidth`. A bare
+  /// number is pixels; a percentage (e.g. "80%") is relative to the available
+  /// width. Falls back to the item-level `photoWidth` when absent.
+  final String? photoWidth;
+
+  /// Per-child image height, mirroring the item-level `photoHeight`. A bare
+  /// number is pixels; a percentage (e.g. "50%") is relative to the available
+  /// width. Falls back to the item-level `photoHeight` when absent.
+  final String? photoHeight;
   final double? borderRadius;
 }
 

@@ -67,12 +67,26 @@ class RenderImageWidget extends StatelessWidget {
       return const SizedBox.shrink();
     }
 
-    final ({double? pixels, double? fraction}) photoWidth = _parsePhotoWidth(
-      item.photoWidth,
-    );
-    final ({double? pixels, double? fraction}) photoHeight = _parsePhotoHeight(
-      item.photoHeight,
-    );
+    // Resolves a child's width/height from its own `photoWidth`/`photoHeight`
+    // (falling back to the item-level values), relative to [availableWidth].
+    ({double? width, double? height}) _resolveSize(
+      PageChild child,
+      double availableWidth,
+    ) {
+      final ({double? pixels, double? fraction}) cw = _parsePhotoWidth(
+        child.photoWidth ?? item.photoWidth,
+      );
+      final ({double? pixels, double? fraction}) ch = _parsePhotoHeight(
+        child.photoHeight ?? item.photoHeight,
+      );
+      final double? width =
+          cw.pixels ??
+          (cw.fraction == null ? null : availableWidth * cw.fraction!);
+      final double? height =
+          ch.pixels ??
+          (ch.fraction == null ? null : availableWidth * ch.fraction!);
+      return (width: width, height: height);
+    }
 
     if (children.length == 1) {
       // A single child is full-width; resolve width/height from the available
@@ -80,17 +94,15 @@ class RenderImageWidget extends StatelessWidget {
       return LayoutBuilder(
         builder: (context, constraints) {
           final double w = constraints.maxWidth;
-          final double? width =
-              photoWidth.pixels ??
-              (photoWidth.fraction == null ? null : w * photoWidth.fraction!);
-          final double? height =
-              photoHeight.pixels ??
-              (photoHeight.fraction == null ? null : w * photoHeight.fraction!);
+          final ({double? width, double? height}) size = _resolveSize(
+            children.first,
+            w,
+          );
           return _ImageTile(
             child: children.first,
             fullWidth: true,
-            width: width,
-            height: height,
+            width: size.width,
+            height: size.height,
             borderRadius: item.photoBorderRadius,
             onLinkTap: onLinkTap,
           );
@@ -103,82 +115,126 @@ class RenderImageWidget extends StatelessWidget {
 
     // In a horizontal ListView each item gets an unbounded width, so we read
     // the viewport width from an outer LayoutBuilder and compute fixed tile
-    // width/height from `photoWidth`/`photoHeight` once.
+    // width/height from `photoWidth`/`photoHeight` per child.
     return LayoutBuilder(
       builder: (context, constraints) {
         final double w = constraints.maxWidth;
-        final double? tileWidth =
-            photoWidth.pixels ??
-            (photoWidth.fraction == null ? null : w * photoWidth.fraction!);
-        final double? tileHeight =
-            photoHeight.pixels ??
-            (photoHeight.fraction == null ? null : w * photoHeight.fraction!);
 
         if (isGrid) {
-          // A responsive grid. The number of columns defaults to 2 and can be
-          // overridden with the `columns` attribute (clamped to 1..6).
-          final int columns = (item.columns ?? 2).clamp(1, 6);
-          // Actual grid cell width, accounting for the outer padding and the
-          // spacing between columns.
+          // Grid tiles are sized from the item-level `photoWidth`/`photoHeight`
+          // (a bare number is pixels; a percentage is relative to the available
+          // width). Each child may still override its own size. The number of
+          // columns auto-fits the tile width, or uses the explicit `columns`
+          // attribute when provided (clamped to 1..6).
           final double availableWidth = w - gap * 2;
+          final ({double? width, double? height}) base = _resolveSize(
+            children.first,
+            availableWidth,
+          );
+          final double baseWidth = base.width ?? 80;
+          final double baseHeight = base.height ?? baseWidth;
+          final int columns = item.columns != null
+              ? item.columns!.clamp(1, 6)
+              : ((availableWidth + gap) / (baseWidth + gap)).floor().clamp(
+                  1,
+                  6,
+                );
           final double cellWidth =
               (availableWidth - gap * (columns - 1)) / columns;
-          // The image's own size comes from `photoWidth`/`photoHeight`: a bare
-          // number is pixels; a percentage is relative to the cell width. When
-          // omitted the image fills the cell (square by default).
-          final double tileWidth =
-              photoWidth.pixels ??
-              (photoWidth.fraction == null
-                  ? cellWidth
-                  : cellWidth * photoWidth.fraction!);
-          final double tileHeight =
-              photoHeight.pixels ??
-              (photoHeight.fraction == null
-                  ? tileWidth
-                  : tileWidth * photoHeight.fraction!);
-          // Size each grid cell to the image (`maxCrossAxisExtent`) so tiles
-          // pack tightly with no extra whitespace. As many columns fit as the
-          // image width allows — defaulting to `columns` when `photoWidth` is
-          // omitted — instead of forcing a fixed column count with a centered,
-          // smaller image inside a wide cell.
+          final double cellHeight = cellWidth * (baseHeight / baseWidth);
           return GridView.builder(
             shrinkWrap: true,
             physics: const NeverScrollableScrollPhysics(),
             padding: EdgeInsets.all(gap),
-            gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
-              maxCrossAxisExtent: tileWidth,
+            gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: columns,
               mainAxisSpacing: gap,
               crossAxisSpacing: gap,
-              childAspectRatio: tileWidth / tileHeight,
+              childAspectRatio: baseWidth / baseHeight,
             ),
             itemCount: children.length,
-            itemBuilder: (context, index) => _ImageTile(
-              child: children[index],
-              fullWidth: false,
-              width: tileWidth,
-              height: tileHeight,
-              borderRadius: item.photoBorderRadius,
-              onLinkTap: onLinkTap,
-            ),
-          );
-        }
-
-        return Padding(
-          padding: EdgeInsets.symmetric(horizontal: gap),
-          child: SizedBox(
-            height: tileHeight ?? 120,
-            child: ListView.separated(
-              scrollDirection: Axis.horizontal,
-              itemCount: children.length,
-              separatorBuilder: (context, index) => SizedBox(width: gap),
-              itemBuilder: (context, index) => _ImageTile(
-                child: children[index],
+            itemBuilder: (context, index) {
+              final PageChild child = children[index];
+              final ({double? width, double? height}) size = _resolveSize(
+                child,
+                cellWidth,
+              );
+              final double tileWidth = size.width ?? cellWidth;
+              final double tileHeight = size.height ?? cellHeight;
+              return _ImageTile(
+                child: child,
                 fullWidth: false,
                 width: tileWidth,
                 height: tileHeight,
                 borderRadius: item.photoBorderRadius,
                 onLinkTap: onLinkTap,
-              ),
+              );
+            },
+          );
+        }
+
+        // When the item requests `wrap`, lay the images out in a wrapping
+        // flow so wide images drop to the next line instead of scrolling
+        // horizontally. Otherwise keep the horizontal scroll row.
+        final bool wrap = item.wrap;
+
+        if (wrap) {
+          return Padding(
+            padding: EdgeInsets.all(gap),
+            child: Wrap(
+              spacing: gap,
+              runSpacing: gap,
+              children: [
+                for (final PageChild child in children)
+                  Builder(
+                    builder: (context) {
+                      final ({double? width, double? height}) size =
+                          _resolveSize(child, w);
+                      return _ImageTile(
+                        child: child,
+                        fullWidth: false,
+                        width: size.width,
+                        height: size.height,
+                        borderRadius: item.photoBorderRadius,
+                        onLinkTap: onLinkTap,
+                      );
+                    },
+                  ),
+              ],
+            ),
+          );
+        }
+
+        // Pre-compute each child's size so the row height can fit the tallest
+        // tile (children may now have different heights).
+        final List<({double width, double height})> sizes = children.map((c) {
+          final ({double? width, double? height}) s = _resolveSize(c, w);
+          return (width: s.width ?? 160, height: s.height ?? 120);
+        }).toList();
+        final double rowHeight = sizes
+            .map((s) => s.height)
+            .reduce((a, b) => a > b ? a : b);
+
+        return Padding(
+          padding: EdgeInsets.symmetric(horizontal: gap),
+          child: SizedBox(
+            height: rowHeight,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              itemCount: children.length,
+              separatorBuilder: (context, index) => SizedBox(width: gap),
+              itemBuilder: (context, index) {
+                final PageChild child = children[index];
+                final ({double width, double height}) size = sizes[index];
+                return _ImageTile(
+                  child: child,
+                  fullWidth: false,
+                  width: size.width,
+                  height: size.height,
+                  borderRadius: item.photoBorderRadius,
+                  onLinkTap: onLinkTap,
+                );
+              },
             ),
           ),
         );

@@ -62,6 +62,7 @@ RenderView(
 	"widgets": {
 		"scccrnBanner": {
 			"type": "image",
+			"wrap": true,
 			"children": [
 				{
 					"image": "https://hatyaicityclimate.org/upload/img/banner-scccrn-800w-01.png",
