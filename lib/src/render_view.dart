@@ -128,6 +128,18 @@ class RenderView extends ConsumerWidget {
     );
   }
 
+  /// Wraps [child] with [margin] when the page declares a top-level `margin`.
+  static Widget _withMargin(EdgeInsets? margin, Widget child) {
+    if (margin == null) return child;
+    return Padding(padding: margin, child: child);
+  }
+
+  /// Wraps [child] with [padding] when the page declares a top-level `padding`.
+  static Widget _withPadding(EdgeInsets? padding, Widget child) {
+    if (padding == null) return child;
+    return Padding(padding: padding, child: child);
+  }
+
   /// Dispatches rendering to one of the three top-level render formats.
   Widget _renderByType(BuildContext context, PageConfig data, WidgetRef ref) {
     switch (data.type) {
@@ -144,7 +156,10 @@ class RenderView extends ConsumerWidget {
               routeArgs: routeArgs,
             );
             if (built != null) {
-              return built;
+              return _withMargin(
+                data.margin,
+                _withPadding(data.padding, built),
+              );
             }
           }
           WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -161,24 +176,31 @@ class RenderView extends ConsumerWidget {
         if (url == null || url.isEmpty) {
           return const Center(child: Text('ไม่มีข้อมูลในขณะนี้'));
         }
-        return RenderWebviewWidget(
-          item: PageItem(
-            type: 'webview',
-            // The page AppBar already shows the title, so omit the inner one.
-            title: null,
-            url: url,
-            children: const [],
+        return _withMargin(
+          data.margin,
+          _withPadding(
+            data.padding,
+            RenderWebviewWidget(
+              item: PageItem(
+                type: 'webview',
+                // The page AppBar already shows the title, so omit the inner one.
+                title: null,
+                url: url,
+                children: const [],
+              ),
+            ),
           ),
         );
 
       case 'widget':
       default:
         // Render the list of widgets.
-        return _RenderList(
+        final Widget list = _RenderList(
           widget: data.widget,
           onLinkTap: onLinkTap,
           onRefresh: () => ref.read(pageProvider(url).notifier).refresh(),
         );
+        return _withMargin(data.margin, _withPadding(data.padding, list));
     }
   }
 }

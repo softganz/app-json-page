@@ -36,6 +36,8 @@ RenderView(
 เป็นการแสดง widget ตามรายการ `show` เรียงตามลำดับ
 - `title` (ไม่บังคับ) จะแสดงบน appBar
 - `type` = "widget"
+- `margin` คือ margin ของหน้า
+- `padding` คือ padding ของหน้า
 - `show` คือ รายการ key ของ widget ที่จะนำมาแสดงตามลำดับ (คั่นด้วย `,`)
 - `cameraPhoto` คือ url หลักที่เก็บภาพจากกล้องสำหรับนำมาแสดง
 - `cameraLastPhoto` คือ folder สำหรับเก็บภาพล่าสุด
@@ -51,6 +53,8 @@ RenderView(
 {
 	"title": "เฝ้าระวังน้ำท่วม",
 	"type": "widget",
+	"margin": "8",
+	"padding": "8",
 	"show": "scccrnBanner,cameraHatyai",
 	"cameraPhoto": "https://hatyaicityclimate.org/floodphoto/",
 	"cameraLastPhoto": "last/",

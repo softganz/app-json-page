@@ -10,6 +10,15 @@ import 'package:flutter/material.dart';
 ///       * `"widget"`  — render a list of widgets (see [widget]).
 ///       * `"webview"` — render an in-app web view (see [url]).
 ///
+/// A page config may also declare a top-level `margin` attribute that adds
+/// padding around the whole rendered content. It accepts the same format as
+/// an item's `padding`:
+///   - `"8"`    -> all sides 8
+///   - `"8,16"` -> vertical 8, horizontal 16
+///
+/// Similarly, a top-level `padding` attribute adds inner padding to the whole
+/// rendered content, using the same `"8"` / `"8,16"` format.
+
 /// Example (webview):
 /// {
 ///   "title": "เฝ้าระวังน้ำท่วม",
@@ -26,7 +35,21 @@ class PageConfig {
     this.url,
     this.logo,
     this.onLoadUrl,
+    this.margin,
+    this.padding,
   });
+
+  /// Optional page-wide margin applied around the whole rendered content.
+  /// Accepts the same format as item `padding`:
+  ///   - `"8"`    -> all sides 8
+  ///   - `"8,16"` -> vertical 8, horizontal 16
+  final EdgeInsets? margin;
+
+  /// Optional page-wide padding applied inside the whole rendered content.
+  /// Accepts the same format as item `padding`:
+  ///   - `"8"`    -> all sides 8
+  ///   - `"8,16"` -> vertical 8, horizontal 16
+  final EdgeInsets? padding;
 
   factory PageConfig.fromJson(Map<String, dynamic> json) {
     // The main render type is normally a top-level `type` attribute (per the
@@ -68,6 +91,8 @@ class PageConfig {
     return PageConfig(
       type: type,
       title: json['title'] as String? ?? '',
+      margin: _parsePadding(json['margin']),
+      padding: _parsePadding(json['padding']),
       widget: widget,
       route: route,
       routeArgs: routeArgs,
