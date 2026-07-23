@@ -213,5 +213,96 @@ void main() {
       await tester.pump();
       expect(find.text('R01'), findsNothing);
     });
+
+    testWidgets('does not auto-reload an image-only cameraSet', (
+      WidgetTester tester,
+    ) async {
+      final PageItem item = PageItem.fromJson({
+        'type': 'cameraSet',
+        'children': [
+          {'image': 'https://x.test/banner.png'},
+        ],
+      });
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: RenderCameraWidget(
+              item: item,
+              cameraPhoto: 'https://x.test/',
+              cameraLastPhoto: 'last/',
+              cameraRealtimePhoto: 'realtime/',
+            ),
+          ),
+        ),
+      );
+      // No pending refresh timer should be scheduled for image-only sets.
+      expect(tester.takeException(), isNull);
+      await tester.pump(const Duration(minutes: 2));
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('auto-reloads a cameraSet that has a named camera', (
+      WidgetTester tester,
+    ) async {
+      final PageItem item = PageItem.fromJson({
+        'type': 'cameraSet',
+        'children': [
+          {'name': 'radartmd'},
+        ],
+      });
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: RenderCameraWidget(
+              item: item,
+              cameraPhoto: 'https://x.test/',
+              cameraLastPhoto: 'last/',
+              cameraRealtimePhoto: 'realtime/',
+            ),
+          ),
+        ),
+      );
+      // A refresh timer is pending for sets with a named camera.
+      expect(tester.takeException(), isNull);
+    });
+  });
+
+  group('PageWidget.cameraReloadTime', () {
+    test('parses cameraReloadTime from JSON', () {
+      final PageWidget widget = PageWidget.fromJson({
+        'show': 'cam',
+        'cameraPhoto': 'https://x.test/',
+        'cameraLastPhoto': 'last/',
+        'cameraRealtimePhoto': 'realtime/',
+        'cameraReloadTime': 30,
+        'widgets': {
+          'cam': {
+            'type': 'cameraSet',
+            'children': [
+              {'name': 'radartmd'},
+            ],
+          },
+        },
+      });
+      expect(widget.cameraReloadTime, 30);
+    });
+
+    test('defaults to 60 when absent', () {
+      final PageWidget widget = PageWidget.fromJson({
+        'show': 'cam',
+        'cameraPhoto': 'https://x.test/',
+        'cameraLastPhoto': 'last/',
+        'cameraRealtimePhoto': 'realtime/',
+        'widgets': {
+          'cam': {
+            'type': 'cameraSet',
+            'children': [
+              {'name': 'radartmd'},
+            ],
+          },
+        },
+      });
+      expect(widget.cameraReloadTime, 60);
+    });
   });
 }

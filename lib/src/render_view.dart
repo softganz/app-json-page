@@ -247,6 +247,7 @@ class _RenderList extends StatelessWidget {
                 cameraPhoto: widget.cameraPhoto,
                 cameraLastPhoto: widget.cameraLastPhoto,
                 cameraRealtimePhoto: widget.cameraRealtimePhoto,
+                reloadTimeSeconds: widget.cameraReloadTime,
                 onLinkTap: onLinkTap,
               ),
             ),

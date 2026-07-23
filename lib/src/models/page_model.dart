@@ -138,6 +138,7 @@ class PageWidget {
     required this.cameraPhoto,
     required this.cameraLastPhoto,
     required this.cameraRealtimePhoto,
+    this.cameraReloadTime = 60,
     required this.items,
   });
 
@@ -147,6 +148,7 @@ class PageWidget {
       cameraPhoto = '',
       cameraLastPhoto = '',
       cameraRealtimePhoto = '',
+      cameraReloadTime = 60,
       items = const {};
 
   factory PageWidget.fromJson(Map<String, dynamic> json) {
@@ -173,6 +175,7 @@ class PageWidget {
       cameraPhoto: src['cameraPhoto'] as String? ?? '',
       cameraLastPhoto: src['cameraLastPhoto'] as String? ?? '',
       cameraRealtimePhoto: src['cameraRealtimePhoto'] as String? ?? '',
+      cameraReloadTime: _toInt(src['cameraReloadTime']) ?? 60,
       items: items,
     );
   }
@@ -181,6 +184,10 @@ class PageWidget {
   final List<String> show;
   final String cameraPhoto;
   final String cameraLastPhoto;
+
+  /// Camera auto-reload interval in seconds (page-level `cameraReloadTime`).
+  /// Defaults to 60 when absent or invalid.
+  final int cameraReloadTime;
   final String cameraRealtimePhoto;
   final Map<String, PageItem> items;
 }

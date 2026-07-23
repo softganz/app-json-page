@@ -42,6 +42,7 @@ RenderView(
 - `cameraPhoto` คือ url หลักที่เก็บภาพจากกล้องสำหรับนำมาแสดง
 - `cameraLastPhoto` คือ folder สำหรับเก็บภาพล่าสุด
 - `cameraRealtimePhoto` คือ folder สำหรับเก็บภาพ realtime ทุก 1 นาที
+- `cameraReloadTime` (ไม่บังคับ) คือช่วงเวลา auto-reload ภาพกล้องในหน่วยวินาที (ใช้กับ `type: cameraSet` ที่มี child ระบุ `name`) ค่าเริ่มต้นคือ `60` หากไม่ระบุหรือระบุค่าไม่ถูกต้อง
 - `widgets` คือ รายการ widget (Map) ที่ระบุใน `show`
 - สำหรับ `type: "widget"` จะมี attribute เพิ่มเติมดังนี้:
   - `type` ของแต่ละ widget มีได้แก่

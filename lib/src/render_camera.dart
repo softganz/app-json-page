@@ -19,6 +19,7 @@ class RenderCameraWidget extends StatefulWidget {
     required this.cameraPhoto,
     required this.cameraLastPhoto,
     required this.cameraRealtimePhoto,
+    this.reloadTimeSeconds = 60,
     this.onLinkTap,
   });
 
@@ -26,6 +27,10 @@ class RenderCameraWidget extends StatefulWidget {
   final String cameraPhoto;
   final String cameraLastPhoto;
   final String cameraRealtimePhoto;
+
+  /// Camera auto-reload interval in seconds (from page `cameraReloadTime`).
+  /// Defaults to 60 when not provided.
+  final int reloadTimeSeconds;
 
   /// Called when a tappable child is tapped. When null, taps are ignored.
   final void Function(BuildContext context, LinkTarget target)? onLinkTap;
@@ -44,13 +49,33 @@ class _RenderCameraWidgetState extends State<RenderCameraWidget> {
   @override
   void initState() {
     super.initState();
-    _scheduleRefresh();
+    // Only auto-reload when there is at least one camera (a child with a
+    // `name` attribute). Children that use their own `image` are never
+    // reloaded, so a timer would be wasted for image-only sets.
+    final bool hasCamera = widget.item.children.any(
+      (c) => (c.name ?? '').isNotEmpty,
+    );
+    if (hasCamera) {
+      debugPrint(
+        '[log] JSON_PAGE:: RenderCamera start auto-reload every '
+        '${widget.reloadTimeSeconds > 0 ? widget.reloadTimeSeconds : 60}s '
+        'for "${widget.item.title ?? ''}"',
+      );
+      _scheduleRefresh();
+    }
   }
 
   void _scheduleRefresh() {
     _refreshTimer?.cancel();
-    _refreshTimer = Timer(RenderCameraWidget.refreshInterval, () {
+    final int seconds = widget.reloadTimeSeconds > 0
+        ? widget.reloadTimeSeconds
+        : 60;
+    _refreshTimer = Timer(Duration(seconds: seconds), () {
       if (!mounted) return;
+      debugPrint(
+        '[log] JSON_PAGE:: RenderCamera reload #${_tick + 1} '
+        'for "${widget.item.title ?? ''}"',
+      );
       setState(() => _tick++);
       _scheduleRefresh();
     });
