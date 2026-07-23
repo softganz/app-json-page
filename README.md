@@ -46,7 +46,12 @@ RenderView(
 - สำหรับ `type: "widget"` จะมี attribute เพิ่มเติมดังนี้:
   - `type` ของแต่ละ widget มีได้แก่
     - `image` คือการแสดงภาพจาก children หากมีรายการเดียว ให้แสดงภาพเต็มหน้าจอ หากมีมากกว่า 1 ภาพให้แสดงเรียงแนวนอน
-    - `cameraSet` คือการแสดงภาพจากกล้อง โดยดึงภาพจาก url ตามรูปแบบ cameraPhoto+cameraLastPhoto+
+    - `cameraSet` คือการแสดงภาพจากกล้อง โดยดึงภาพจาก url ตามรูปแบบ {cameraPhoto}/{cameraLastPhoto}/{name}.jpg
+      - `webViewUrl` (ไม่บังคับ, ระดับ item) คือ template URL สำหรับเปิด in-app-webview เมื่อแตะ child ที่ **ไม่ได้** ระบุ `webViewUrl` ของตัวเอง
+        - รองรับ placeholder `{name}` `{code}` `{title}` `{image}` `{url}` `{route}` ซึ่งจะถูกแทนด้วยค่า attribute ของ child นั้น
+        - หาก attribute ที่อ้างถึงว่างเปล่า จะข้าม template นี้ (ไม่สร้าง URL ที่ไม่สมบูรณ์)
+        - ตัวอย่าง: `"webViewUrl": "https://hatyaicityclimate.org/flood/cam/view?name={name}"` จะแปลงเป็น `...?name=radartmd` สำหรับ child ที่มี `"name": "radartmd"`
+      - child ที่มี `webViewUrl` ของตัวเอง จะใช้ของตัวเองตามเดิม (ไม่ถูกแทนค่า)
     - `sizebox` คือชิ้นส่วนว่างสำหรับจัดระยะ
 
 ```
@@ -66,7 +71,6 @@ RenderView(
 			"children": [
 				{
 					"image": "https://hatyaicityclimate.org/upload/img/banner-scccrn-800w-01.png",
-					"webViewUrl": "",
 					"url": "", // Url ภายนอก
 					"webViewUrl": "", // String?	URL ให้ เปิดใน in-app web view เมื่อแตะรูป
 					"route": "", // String?	ชื่อ named route (เช่น "/about") ให้ นำทางในแอป เมื่อแตะรูป
@@ -86,9 +90,8 @@ RenderView(
 				{
 					"title": "Camera title",
 					"code": "R01",
-					"name": "radartmd",
-					"code: "",
-					"name": "", // String?	มีในโมเดล แต่ใช้กับ cameraSet เป็นหลัก (ไม่มีผลกับ image)
+					"name": "radartmd", // String?	มีในโมเดล แต่ใช้กับ cameraSet เป็นหลัก (ไม่มีผลกับ image)
+					"webViewUrl": "",
 				},
 				...
 			]

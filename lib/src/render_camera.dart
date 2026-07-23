@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import 'package:json_page/src/models/page_model.dart';
@@ -37,20 +39,27 @@ class RenderCameraWidget extends StatefulWidget {
 
 class _RenderCameraWidgetState extends State<RenderCameraWidget> {
   int _tick = 0;
+  Timer? _refreshTimer;
 
   @override
   void initState() {
     super.initState();
-    Future<void>.delayed(Duration.zero).then((_) => _scheduleRefresh());
+    _scheduleRefresh();
   }
 
   void _scheduleRefresh() {
-    if (!mounted) return;
-    Future<void>.delayed(RenderCameraWidget.refreshInterval, () {
+    _refreshTimer?.cancel();
+    _refreshTimer = Timer(RenderCameraWidget.refreshInterval, () {
       if (!mounted) return;
       setState(() => _tick++);
       _scheduleRefresh();
     });
+  }
+
+  @override
+  void dispose() {
+    _refreshTimer?.cancel();
+    super.dispose();
   }
 
   String _buildUrl(PageChild child) {
@@ -184,13 +193,27 @@ class _RenderCameraWidgetState extends State<RenderCameraWidget> {
         return;
       }
 
-      // A `webViewUrl` opens the in-app WebScreen; otherwise launch `url`
-      // externally when present.
+      // A `webViewUrl` opens the in-app WebScreen; otherwise fall back to the
+      // item-level `webViewUrl` template (resolved against this child's
+      // attributes), and finally launch `url` externally when present.
       final String? webViewUrl = child.webViewUrl;
       if (webViewUrl != null && webViewUrl.isNotEmpty) {
         handler(
           context,
           LinkTarget(webViewUrl: webViewUrl, title: child.title),
+        );
+        return;
+      }
+
+      final String? itemTemplate = widget.item.webViewUrl;
+      final String? resolvedTemplate =
+          itemTemplate != null && itemTemplate.isNotEmpty
+          ? child.resolveTemplate(itemTemplate)
+          : null;
+      if (resolvedTemplate != null && resolvedTemplate.isNotEmpty) {
+        handler(
+          context,
+          LinkTarget(webViewUrl: resolvedTemplate, title: child.title),
         );
         return;
       }
@@ -216,10 +239,43 @@ class _RenderCameraWidgetState extends State<RenderCameraWidget> {
               borderRadius: widget.item.photoBorderRadius,
             );
 
+      // Overlay the child's `code` as a green, rounded badge at the top-left
+      // corner of the image (background label).
+      final Widget imageWithBadge =
+          (child.code != null && child.code!.isNotEmpty)
+          ? Stack(
+              children: [
+                imageWidget,
+                Positioned(
+                  top: 6,
+                  left: 6,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 2,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Colors.green,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Text(
+                      child.code!,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 8,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            )
+          : imageWidget;
+
       final Widget tile = Column(
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          imageWidget,
+          imageWithBadge,
           if (child.title != null && child.title!.isNotEmpty)
             Padding(
               padding: const EdgeInsets.fromLTRB(12, 4, 12, 8),
@@ -238,11 +294,15 @@ class _RenderCameraWidgetState extends State<RenderCameraWidget> {
         ],
       );
 
-      // If the child has a `url` or `webViewUrl`, tapping the tile opens it,
-      // just like the `image` type.
+      // If the child has a `url` or `webViewUrl`, or the item declares a
+      // `webViewUrl` template that resolves for this child, tapping the tile
+      // opens it (just like the `image` type).
       final bool tappable =
           (child.url != null && child.url!.isNotEmpty) ||
-          (child.webViewUrl != null && child.webViewUrl!.isNotEmpty);
+          (child.webViewUrl != null && child.webViewUrl!.isNotEmpty) ||
+          (widget.item.webViewUrl != null &&
+              widget.item.webViewUrl!.isNotEmpty &&
+              child.resolveTemplate(widget.item.webViewUrl) != null);
       if (!tappable) return tile;
       return GestureDetector(onTap: () => onTap(child), child: tile);
     }

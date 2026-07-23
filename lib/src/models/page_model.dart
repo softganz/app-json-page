@@ -190,6 +190,7 @@ class PageItem {
     required this.type,
     this.title,
     this.url,
+    this.webViewUrl,
     required this.children,
     this.padding,
     this.layout,
@@ -211,6 +212,7 @@ class PageItem {
       type: json['type'] as String? ?? '',
       title: json['title'] as String?,
       url: json['url'] as String?,
+      webViewUrl: json['webViewUrl'] as String?,
       children: children,
       padding: _parsePadding(json['padding']),
       layout: json['layout'] as String?,
@@ -227,6 +229,12 @@ class PageItem {
   final String? title;
 
   /// Optional item-level URL (e.g. used by `type: webView`).
+
+  /// Optional item-level web-view URL template (used by `type: cameraSet`).
+  /// Supports `{placeholder}` tokens resolved against each child's attributes
+  /// (see [PageChild.resolveTemplate]). When a child does not declare its own
+  /// `webViewUrl`, this template is used as a fallback.
+  final String? webViewUrl;
   final String? url;
   final List<PageChild> children;
   final EdgeInsets? padding;
@@ -294,6 +302,39 @@ class PageChild {
       photoHeight: json['photoHeight'] as String?,
       borderRadius: _toDouble(json['borderRadius']),
     );
+  }
+
+  /// Resolves `{placeholder}` tokens in [template] against this child's
+  /// attributes. Supported tokens: `{name}`, `{code}`, `{title}`, `{image}`,
+  /// `{url}`, `{route}`.
+  ///
+  /// Returns `null` when [template] is null/empty, or when any *supported*
+  /// attribute referenced by a token is missing/empty (so a half-substituted
+  /// URL is never produced). Unknown tokens (not in the supported set) are
+  /// left untouched in the result.
+  String? resolveTemplate(String? template) {
+    if (template == null || template.isEmpty) return null;
+    final Map<String, String?> values = {
+      'name': name,
+      'code': code,
+      'title': title,
+      'image': image,
+      'url': url,
+      'route': route,
+    };
+    final RegExp tokenRe = RegExp(r'\{(\w+)\}');
+    if (!tokenRe.hasMatch(template)) return template;
+    String result = template;
+    for (final RegExpMatch m in tokenRe.allMatches(template)) {
+      final String key = m.group(1)!;
+      // Unknown token (not a supported attribute): leave it untouched.
+      if (!values.containsKey(key)) continue;
+      final String? value = values[key];
+      // Supported token with a null/empty value: refuse to build a broken URL.
+      if (value == null || value.isEmpty) return null;
+      result = result.replaceAll(m.group(0)!, value);
+    }
+    return result;
   }
 
   final String? image;
