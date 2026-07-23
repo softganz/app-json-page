@@ -12,9 +12,15 @@ import 'package:json_page/src/models/page_model.dart';
 /// item also declares a `title`, it is shown on an `AppBar` above the web
 /// view. The web view fills the full available display height.
 class RenderWebviewWidget extends StatelessWidget {
-  const RenderWebviewWidget({super.key, required this.item});
+  const RenderWebviewWidget({super.key, required this.item, this.headers});
 
   final PageItem item;
+
+  /// Optional HTTP headers sent with every request made by this web view
+  /// (e.g. `{kDeviceIdHeader: deviceId}`). Applied to the initial load and to
+  /// every in-web-view navigation via [shouldOverrideUrlLoading], so the
+  /// server receives the header on every open.
+  final Map<String, String>? headers;
 
   String? _resolveUrl() {
     // Open a single URL from the item's `url` field (per the webView spec).
@@ -45,11 +51,23 @@ class RenderWebviewWidget extends StatelessWidget {
       width: double.infinity,
       height: double.infinity,
       child: InAppWebView(
-        initialUrlRequest: URLRequest(url: WebUri(url)),
+        initialUrlRequest: URLRequest(url: WebUri(url), headers: headers),
         initialSettings: InAppWebViewSettings(
           javaScriptEnabled: true,
           useShouldOverrideUrlLoading: true,
         ),
+        // Re-apply [headers] on every in-web-view navigation so the server
+        // receives the deviceId header on each subsequent request too.
+        shouldOverrideUrlLoading: (controller, navigationAction) async {
+          final WebUri? navUrl = navigationAction.request.url;
+          if (navUrl != null && headers != null && headers!.isNotEmpty) {
+            await controller.loadUrl(
+              urlRequest: URLRequest(url: navUrl, headers: headers),
+            );
+            return NavigationActionPolicy.CANCEL;
+          }
+          return NavigationActionPolicy.ALLOW;
+        },
       ),
     );
 

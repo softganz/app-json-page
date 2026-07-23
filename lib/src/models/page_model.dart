@@ -1,5 +1,10 @@
 import 'package:flutter/material.dart';
 
+/// ชื่อ header ที่ใช้ส่ง deviceId ไป server (ป้องกันการเปิดเผยใน URL query
+/// string / log). Host app ควร import ค่านี้มาใช้เพื่อให้ตรงกับ header
+/// ที่ API คาดหวังเสมอ (เช่น `X-Device-Id`).
+const String kDeviceIdHeader = 'X-Device-Id';
+
 /// Data model for a page config, parsed from a page JSON file
 /// (e.g. `home.json`, `apps.json`).
 ///

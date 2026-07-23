@@ -34,6 +34,7 @@ class RenderView extends ConsumerWidget {
     this.onLinkTap,
     this.onRoute,
     this.routeBuilder,
+    this.webViewHeaders,
   });
 
   /// JSON URL to fetch and render (e.g. `https://example.com/home.json`).
@@ -84,6 +85,11 @@ class RenderView extends ConsumerWidget {
     Map<String, dynamic>? routeArgs,
   })?
   routeBuilder;
+
+  /// Optional HTTP headers forwarded to every in-app web view opened by this
+  /// page (e.g. `{kDeviceIdHeader: deviceId}`). Applied to both the top-level
+  /// `type: "webview"` page and any `type: "webView"` item.
+  final Map<String, String>? webViewHeaders;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -188,6 +194,7 @@ class RenderView extends ConsumerWidget {
                 url: url,
                 children: const [],
               ),
+              headers: webViewHeaders,
             ),
           ),
         );
@@ -199,6 +206,7 @@ class RenderView extends ConsumerWidget {
           widget: data.widget,
           onLinkTap: onLinkTap,
           onRefresh: () => ref.read(pageProvider(url).notifier).refresh(),
+          webViewHeaders: webViewHeaders,
         );
         return _withMargin(data.margin, _withPadding(data.padding, list));
     }
@@ -210,11 +218,15 @@ class _RenderList extends StatelessWidget {
     required this.widget,
     required this.onRefresh,
     this.onLinkTap,
+    this.webViewHeaders,
   });
 
   final PageWidget widget;
   final Future<void> Function() onRefresh;
   final void Function(BuildContext context, LinkTarget target)? onLinkTap;
+
+  /// Optional HTTP headers forwarded to every in-app web view item.
+  final Map<String, String>? webViewHeaders;
 
   /// Wraps [child] with [padding] when the item declares one.
   static Widget _withPadding(EdgeInsets? padding, Widget child) {
@@ -254,7 +266,10 @@ class _RenderList extends StatelessWidget {
           );
         case 'webView':
           tiles.add(
-            _withPadding(item.padding, RenderWebviewWidget(item: item)),
+            _withPadding(
+              item.padding,
+              RenderWebviewWidget(item: item, headers: webViewHeaders),
+            ),
           );
         default:
           break;
