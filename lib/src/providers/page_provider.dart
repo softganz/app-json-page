@@ -27,6 +27,7 @@ class PageNotifier extends FamilyAsyncNotifier<PageConfig, String> {
   }
 
   Future<PageConfig> _fetch() async {
+    log('JSON_PAGE :: pageProvider: loading json from $_url');
     try {
       final http.Response response = await http.get(Uri.parse(_url));
       if (response.statusCode != 200) {
