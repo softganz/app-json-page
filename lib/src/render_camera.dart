@@ -96,6 +96,11 @@ class _RenderCameraWidgetState extends State<RenderCameraWidget> {
   /// (scrolling never triggers a reload for them).
   static final Map<String, int> _cameraTick = {};
 
+  /// Last image URL actually loaded per camera `name`. Static so the
+  /// "load image" log only prints when the URL genuinely changes (dedupes
+  /// rebuilds/scrolls that reuse the same cached URL).
+  static final Map<String, String> _loadedUrl = {};
+
   /// Reconciles THIS widget's cameras against the shared [updateAt] map.
   ///
   /// Iterates only this widget's own children (not the whole page map) and
@@ -344,6 +349,14 @@ class _RenderCameraWidgetState extends State<RenderCameraWidget> {
     // back to the full image if the thumbnail is missing on the server.
     final bool canFallback =
         widget.cameraThumbPhoto.isNotEmpty && url != fullUrl;
+    // Log the image URL actually being loaded, but only when it changes for
+    // this camera (deduped via a static map) so scrolling/rebuilds that reuse
+    // the same cached URL stay quiet.
+    final String name = child.name ?? '';
+    if (_loadedUrl[name] != url) {
+      _loadedUrl[name] = url;
+      debugPrint('[log] JSON_PAGE:: RenderCamera load image "$name" -> $url');
+    }
     final Widget image = Image.network(
       url,
       fit: BoxFit.cover,
@@ -358,6 +371,10 @@ class _RenderCameraWidgetState extends State<RenderCameraWidget> {
       errorBuilder: (context, error, stackTrace) {
         if (canFallback) {
           // Thumbnail missing → load the full image instead.
+          debugPrint(
+            '[log] JSON_PAGE:: RenderCamera thumbnail missing for "$name", '
+            'fallback to full -> $fullUrl',
+          );
           return Image.network(
             fullUrl,
             fit: BoxFit.cover,
