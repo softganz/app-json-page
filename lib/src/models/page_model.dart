@@ -209,7 +209,8 @@ class PageWidget {
     required this.cameraPhoto,
     required this.cameraLastPhoto,
     required this.cameraRealtimePhoto,
-    this.cameraReloadTime = 60,
+    required this.cameraLogPhoto,
+    this.cameraPoolInterval = 60,
     required this.items,
   });
 
@@ -219,7 +220,8 @@ class PageWidget {
       cameraPhoto = '',
       cameraLastPhoto = '',
       cameraRealtimePhoto = '',
-      cameraReloadTime = 60,
+      cameraLogPhoto = '',
+      cameraPoolInterval = 60,
       items = const {};
 
   factory PageWidget.fromJson(Map<String, dynamic> json) {
@@ -246,7 +248,8 @@ class PageWidget {
       cameraPhoto: src['cameraPhoto'] as String? ?? '',
       cameraLastPhoto: src['cameraLastPhoto'] as String? ?? '',
       cameraRealtimePhoto: src['cameraRealtimePhoto'] as String? ?? '',
-      cameraReloadTime: _toInt(src['cameraReloadTime']) ?? 60,
+      cameraLogPhoto: src['cameraLogPhoto'] as String? ?? '',
+      cameraPoolInterval: _toInt(src['cameraPoolInterval']) ?? 60,
       items: items,
     );
   }
@@ -256,10 +259,16 @@ class PageWidget {
   final String cameraPhoto;
   final String cameraLastPhoto;
 
-  /// Camera auto-reload interval in seconds (page-level `cameraReloadTime`).
+  /// Camera auto-reload interval in seconds (page-level `cameraPoolInterval`).
   /// Defaults to 60 when absent or invalid.
-  final int cameraReloadTime;
+  final int cameraPoolInterval;
   final String cameraRealtimePhoto;
+
+  /// Optional log-file name (relative to [cameraPhoto]) that lists each
+  /// camera's latest `updateAt`. When non-empty, polling reads this file and
+  /// reloads only cameras whose `updateAt` changed. When empty, polling falls
+  /// back to reloading every camera image.
+  final String cameraLogPhoto;
   final Map<String, PageItem> items;
 }
 
@@ -357,6 +366,7 @@ class PageChild {
     this.title,
     this.code,
     this.name,
+    this.time,
     this.height,
     this.width,
     this.photoWidth,
@@ -374,6 +384,7 @@ class PageChild {
       title: json['title'] as String?,
       code: json['code'] as String?,
       name: json['name'] as String?,
+      time: json['time'] as String?,
       height: _toDouble(json['height']),
       width: _toDouble(json['width']),
       photoWidth: json['photoWidth'] as String?,
@@ -427,6 +438,11 @@ class PageChild {
   final String? title;
   final String? code;
   final String? name;
+
+  /// Photo capture/arrival time shown as a small overlay at the top-right of
+  /// the image (set by realtime `photo.new` patches). Not part of the JSON
+  /// schema — populated at runtime.
+  final String? time;
   final double? height;
   final double? width;
 
@@ -450,6 +466,7 @@ class PageChild {
     String? title,
     String? code,
     String? name,
+    String? time,
     double? height,
     double? width,
     String? photoWidth,
@@ -465,6 +482,7 @@ class PageChild {
       title: title ?? this.title,
       code: code ?? this.code,
       name: name ?? this.name,
+      time: time ?? this.time,
       height: height ?? this.height,
       width: width ?? this.width,
       photoWidth: photoWidth ?? this.photoWidth,

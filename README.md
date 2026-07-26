@@ -42,7 +42,8 @@ RenderView(
 - `cameraPhoto` คือ url หลักที่เก็บภาพจากกล้องสำหรับนำมาแสดง
 - `cameraLastPhoto` คือ folder สำหรับเก็บภาพล่าสุด
 - `cameraRealtimePhoto` คือ folder สำหรับเก็บภาพ realtime ทุก 1 นาที
-- `cameraReloadTime` (ไม่บังคับ) คือช่วงเวลา auto-reload ภาพกล้องในหน่วยวินาที (ใช้กับ `type: cameraSet` ที่มี child ระบุ `name`) ค่าเริ่มต้นคือ `60` หากไม่ระบุหรือระบุค่าไม่ถูกต้อง
+- `cameraLogPhoto` (ไม่บังคับ) คือชื่อไฟล์ log (relative ต่อ `cameraPhoto`) ที่เก็บ `updateAt` ล่าสุดของแต่ละกล้อง เมื่อถึงรอบ poll จะอ่านไฟล์นี้และ reload เฉพาะกล้องที่ `updateAt` เปลี่ยน หากไม่ระบุหรืออ่านไฟล์ไม่ได้ จะ fallback ไป reload ทุกกล้องเหมือนเดิม
+- `cameraPoolInterval` (ไม่บังคับ) คือช่วงเวลา auto-reload ภาพกล้องในหน่วยวินาที (ใช้กับ `type: cameraSet` ที่มี child ระบุ `name`) ค่าเริ่มต้นคือ `60` หากไม่ระบุหรือระบุค่าไม่ถูกต้อง
 - `widgets` คือ รายการ widget (Map) ที่ระบุใน `show`
 - สำหรับ `type: "widget"` จะมี attribute เพิ่มเติมดังนี้:
   - `type` ของแต่ละ widget มีได้แก่

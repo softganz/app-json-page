@@ -1,6 +1,8 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
 
 import 'package:json_page/src/models/page_model.dart';
 
@@ -19,8 +21,10 @@ class RenderCameraWidget extends StatefulWidget {
     required this.cameraPhoto,
     required this.cameraLastPhoto,
     required this.cameraRealtimePhoto,
+    this.cameraLogPhoto = '',
     this.reloadTimeSeconds = 60,
     this.externalTick = 0,
+    this.realtimeActive = false,
     this.onLinkTap,
   });
 
@@ -29,9 +33,22 @@ class RenderCameraWidget extends StatefulWidget {
   final String cameraLastPhoto;
   final String cameraRealtimePhoto;
 
-  /// Camera auto-reload interval in seconds (from page `cameraReloadTime`).
+  /// Optional log-file name (relative to [cameraPhoto]) that lists each
+  /// camera's latest `updateAt`. When non-empty, polling reads this file and
+  /// reloads only cameras whose `updateAt` changed since the last poll.
+  /// When empty (or the file is unreachable), polling falls back to reloading
+  /// every camera image each round.
+  final String cameraLogPhoto;
+
+  /// Camera auto-reload interval in seconds (from page `cameraPoolInterval`).
   /// Defaults to 60 when not provided.
   final int reloadTimeSeconds;
+
+  /// When true, a realtime connection (firebase/ws) owns photo updates, so the
+  /// periodic 60s poll timer is disabled — the image reloads only on a
+  /// `photo.new` event (via [externalTick] or a child's `time` change). In
+  /// `poll` mode this stays false and the timer runs as a fallback.
+  final bool realtimeActive;
 
   /// External tick that forces an immediate image reload when it changes.
   /// Driven by realtime photo.new events (e.g. Firebase RTDB push) so the
@@ -49,9 +66,140 @@ class RenderCameraWidget extends StatefulWidget {
   State<RenderCameraWidget> createState() => _RenderCameraWidgetState();
 }
 
+/// A single in-flight (or recently completed) log fetch, shared across all
+/// `cameraSet` widgets that poll the same log URL within [_logCacheTtl].
+class _LogCacheEntry {
+  const _LogCacheEntry(this.future, this.expiresAt);
+
+  /// The shared fetch result. Widgets awaiting this future all get the same
+  /// parsed `name -> updateAt` map without extra network requests.
+  final Future<Map<String, String>?> future;
+
+  /// When this entry stops being reused (next poll round re-fetches).
+  final DateTime expiresAt;
+}
+
 class _RenderCameraWidgetState extends State<RenderCameraWidget> {
   int _tick = 0;
   Timer? _refreshTimer;
+
+  /// Shared, per-URL cache of the most recent log fetch. Collapses concurrent
+  /// polls from multiple `cameraSet` widgets into a SINGLE network request
+  /// per round (keyed by the log URL). Entries expire after [_logCacheTtl]
+  /// so the next poll round re-fetches fresh data from the server.
+  static final Map<String, _LogCacheEntry> _logCache = {};
+
+  /// How long a cached log fetch stays valid. Must be shorter than the poll
+  /// interval so each round triggers exactly one fresh request, while long
+  /// enough to cover the few-millisecond spread between widget timers.
+  static const Duration _logCacheTtl = Duration(seconds: 5);
+
+  /// Latest `updateAt` per camera `name`, read from the log file. Used to
+  /// detect which cameras changed between polls so only those reload.
+  final Map<String, String> _lastUpdateAt = {};
+
+  /// Whether the log file is currently usable. When false (no `cameraLogPhoto`,
+  /// fetch error, or invalid JSON) we fall back to reloading every camera.
+  bool _logAvailable = false;
+
+  /// Cameras that changed in the most recent poll and should reload this round.
+  final Set<String> _changedNames = {};
+
+  /// Resolves the full log-file URL: `cameraPhoto + cameraLogPhoto`.
+  String get _logUrl => '${widget.cameraPhoto}${widget.cameraLogPhoto}';
+
+  /// Fetches and parses the log file into a `name -> updateAt` map.
+  ///
+  /// Returns `null` on any failure (no log configured, network error, invalid
+  /// JSON) so the caller can fall back to reloading every camera.
+  Future<Map<String, String>?> _fetchLog() async {
+    if (widget.cameraLogPhoto.isEmpty) return null;
+    final String url = _logUrl;
+    final DateTime now = DateTime.now();
+    final _LogCacheEntry? cached = _logCache[url];
+    if (cached != null && cached.expiresAt.isAfter(now)) {
+      // Another widget already fetched (or is fetching) this URL this round.
+      // Reuse the single network request instead of hitting the server again.
+      return cached.future;
+    }
+
+    // Cache miss (or expired): own this round's fetch so sibling widgets
+    // share it. The future is stored immediately so concurrent callers within
+    // the TTL reuse the same in-flight request.
+    final Completer<Map<String, String>?> completer =
+        Completer<Map<String, String>?>();
+    _logCache[url] = _LogCacheEntry(completer.future, now.add(_logCacheTtl));
+
+    final String pollStart = _nowHms();
+    debugPrint(
+      '[log] JSON_PAGE:: RenderCamera fetch log $url (poll start $pollStart)',
+    );
+    try {
+      final http.Response res = await http.get(Uri.parse(url));
+      debugPrint(
+        '[log] JSON_PAGE:: RenderCamera log response '
+        'status=${res.statusCode}',
+      );
+      if (res.statusCode != 200) {
+        completer.complete(null);
+        return completer.future;
+      }
+      final dynamic decoded = json.decode(utf8.decode(res.bodyBytes));
+      if (decoded is! Map) {
+        completer.complete(null);
+        return completer.future;
+      }
+      final Map<String, String> result = {};
+      decoded.forEach((key, value) {
+        if (value is Map && value['updateAt'] != null) {
+          result[value['name']?.toString() ?? key.toString()] =
+              value['updateAt'].toString();
+        }
+      });
+      completer.complete(result);
+      return completer.future;
+    } catch (_) {
+      completer.complete(null);
+      return completer.future;
+    }
+  }
+
+  /// Reloads only the cameras whose `updateAt` changed in the log, or every
+  /// camera when the log is unavailable. Returns the names that were reloaded.
+  Future<Set<String>> _pollChanged() async {
+    final Map<String, String>? log = await _fetchLog();
+    if (log == null) {
+      // Fallback: reload every camera (no log or fetch failed).
+      _logAvailable = false;
+      final Set<String> all = {
+        for (final PageChild c in widget.item.children)
+          if ((c.name ?? '').isNotEmpty) c.name!,
+      };
+      _changedNames
+        ..clear()
+        ..addAll(all);
+      return all;
+    }
+    _logAvailable = true;
+    final Set<String> changed = {};
+    for (final MapEntry<String, String> e in log.entries) {
+      final String prev = _lastUpdateAt[e.key] ?? '';
+      if (prev != e.value) {
+        changed.add(e.key);
+        debugPrint(
+          '[log] JSON_PAGE:: RenderCamera update image '
+          '"${e.key}" updateAt $prev -> ${e.value}',
+        );
+      }
+    }
+    _lastUpdateAt
+      ..clear()
+      ..addAll(log);
+    _changedNames
+      ..clear()
+      ..addAll(changed);
+    return changed;
+  }
 
   @override
   void didUpdateWidget(covariant RenderCameraWidget oldWidget) {
@@ -60,6 +208,26 @@ class _RenderCameraWidgetState extends State<RenderCameraWidget> {
     if (widget.externalTick != oldWidget.externalTick) {
       if (mounted) {
         setState(() => _tick++);
+      }
+    }
+    // Realtime photo.new: when a child's photo `time` changes, reload that
+    // child's live image immediately (cache-bust via _tick) so the new photo
+    // shows without waiting for the periodic timer. Only the affected
+    // cameraSet widget reloads — other sets are untouched.
+    for (int i = 0; i < widget.item.children.length; i++) {
+      final PageChild child = widget.item.children[i];
+      final PageChild? oldChild = i < oldWidget.item.children.length
+          ? oldWidget.item.children[i]
+          : null;
+      if (child.time != oldChild?.time && (child.time ?? '').isNotEmpty) {
+        if (mounted) {
+          setState(() => _tick++);
+          debugPrint(
+            '[log] JSON_PAGE:: RenderCamera firebase realtime reload '
+            '(time=${child.time}) for camera "${child.name ?? ''}"',
+          );
+        }
+        break;
       }
     }
   }
@@ -73,13 +241,21 @@ class _RenderCameraWidgetState extends State<RenderCameraWidget> {
     final bool hasCamera = widget.item.children.any(
       (c) => (c.name ?? '').isNotEmpty,
     );
-    if (hasCamera) {
+    // In realtime mode (firebase/ws) the connection owns photo updates, so we
+    // must NOT run the periodic poll timer — otherwise it would reload every
+    // 60s regardless of realtime. Only start the timer when realtime is off.
+    if (hasCamera && !widget.realtimeActive) {
       debugPrint(
         '[log] JSON_PAGE:: RenderCamera start auto-reload every '
         '${widget.reloadTimeSeconds > 0 ? widget.reloadTimeSeconds : 60}s '
         'for "${widget.item.title ?? ''}"',
       );
       _scheduleRefresh();
+    } else if (hasCamera && widget.realtimeActive) {
+      debugPrint(
+        '[log] JSON_PAGE:: RenderCamera realtime active — poll timer disabled '
+        'for "${widget.item.title ?? ''}"',
+      );
     }
   }
 
@@ -90,12 +266,33 @@ class _RenderCameraWidgetState extends State<RenderCameraWidget> {
         : 60;
     _refreshTimer = Timer(Duration(seconds: seconds), () {
       if (!mounted) return;
-      debugPrint(
-        '[log] JSON_PAGE:: RenderCamera reload #${_tick + 1} '
-        'for "${widget.item.title ?? ''}"',
-      );
-      setState(() => _tick++);
-      _scheduleRefresh();
+      // This branch only runs when the poll timer is active (realtime off),
+      // so the reload log reflects genuine periodic polling — never a
+      // realtime-driven refresh.
+      _pollChanged().then((changed) {
+        if (!mounted) return;
+        if (changed.isEmpty) {
+          debugPrint(
+            '[log] JSON_PAGE:: RenderCamera poll #${_tick + 1} '
+            'no camera changed for "${widget.item.title ?? ''}"',
+          );
+          // No camera updated this round: rebuild so the green "updated"
+          // highlight from a previous round is cleared and badges revert to
+          // gray. We do NOT bump [_tick], so unchanged cameras keep showing
+          // their last loaded frame (no extra network reload).
+          if (mounted) setState(() {});
+          _scheduleRefresh();
+          return;
+        }
+        for (final String name in changed) {
+          debugPrint(
+            '[log] JSON_PAGE:: RenderCamera updating image "$name" '
+            '-> ${widget.cameraPhoto}${widget.cameraLastPhoto}$name.jpg',
+          );
+        }
+        setState(() => _tick++);
+        _scheduleRefresh();
+      });
     });
   }
 
@@ -105,12 +302,24 @@ class _RenderCameraWidgetState extends State<RenderCameraWidget> {
     super.dispose();
   }
 
+  /// Current time formatted as `HH:MM:SS`, used for poll-start timestamps.
+  String _nowHms() {
+    final DateTime n = DateTime.now();
+    String p(int v) => v.toString().padLeft(2, '0');
+    return '${p(n.hour)}:${p(n.minute)}:${p(n.second)}';
+  }
+
   String _buildUrl(PageChild child) {
     final String name = child.name ?? '';
     final String base =
         '${widget.cameraPhoto}${widget.cameraLastPhoto}$name.jpg';
-    // Cache-bust so the network image reloads on each tick.
-    return '$base?t=$_tick';
+    // Cache-bust so the network image reloads on each tick. When log-driven
+    // polling is active, only cameras in [_changedNames] get a fresh tick;
+    // others keep showing their last loaded frame (no extra network hit).
+    final int tick = (_logAvailable && !_changedNames.contains(name))
+        ? _tick - 1
+        : _tick;
+    return '$base?t=$tick';
   }
 
   Widget _cameraImage(PageChild child, {double? height, double? borderRadius}) {
@@ -122,8 +331,7 @@ class _RenderCameraWidgetState extends State<RenderCameraWidget> {
       // Keep showing the previous frame until the new image is fully loaded,
       // then swap in place (no clearing/placeholder between refreshes).
       gaplessPlayback: true,
-      errorBuilder: (context, error, stackTrace) =>
-          const Center(child: Icon(Icons.broken_image, size: 40)),
+      errorBuilder: (context, error, stackTrace) => _imagePlaceholder(height),
     );
 
     // Round by default (12). An item-level `photoBorderRadius` or a
@@ -146,12 +354,24 @@ class _RenderCameraWidgetState extends State<RenderCameraWidget> {
         if (loadingProgress == null) return widget;
         return const Center(child: CircularProgressIndicator());
       },
-      errorBuilder: (context, error, stackTrace) =>
-          const Center(child: Icon(Icons.broken_image, size: 40)),
+      errorBuilder: (context, error, stackTrace) => _imagePlaceholder(height),
     );
 
     final double radius = borderRadius ?? child.borderRadius ?? 12;
     return ClipRRect(borderRadius: BorderRadius.circular(radius), child: image);
+  }
+
+  /// A neutral empty placeholder that keeps the exact image dimensions
+  /// (`height`, full width) so the layout never shifts when a camera photo
+  /// fails to load (broken/incomplete image). Uses a gray background close to
+  /// the time badge's `Colors.grey` instead of a broken-image icon so the
+  /// tile stays clean.
+  Widget _imagePlaceholder(double? height) {
+    return Container(
+      width: double.infinity,
+      height: height,
+      color: Colors.grey.shade400,
+    );
   }
 
   @override
@@ -282,37 +502,73 @@ class _RenderCameraWidgetState extends State<RenderCameraWidget> {
               borderRadius: widget.item.photoBorderRadius,
             );
 
-      // Overlay the child's `code` as a green, rounded badge at the top-left
-      // corner of the image (background label).
-      final Widget imageWithBadge =
-          (child.code != null && child.code!.isNotEmpty)
-          ? Stack(
-              children: [
-                imageWidget,
-                Positioned(
-                  top: 6,
-                  left: 6,
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 8,
-                      vertical: 2,
-                    ),
-                    decoration: BoxDecoration(
-                      color: Colors.green,
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Text(
-                      child.code!,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 8,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ),
+      // A camera is "updated" when it changed in the latest poll round
+      // (log-driven mode, tracked in [_changedNames]) OR when a realtime
+      // photo event set its `time` (realtime mode). Updated cameras show a
+      // green background on BOTH the code badge and the time pill; otherwise
+      // they stay gray (initial state). Cameras that never change keep gray.
+      final String name = child.name ?? '';
+      final bool changedThisRound = _changedNames.contains(name);
+      final bool hasRealtimeTime = child.time != null && child.time!.isNotEmpty;
+      final bool isUpdated = changedThisRound || hasRealtimeTime;
+      final Color badgeColor = isUpdated ? Colors.green : Colors.grey;
+      // Time to display: prefer the realtime `time`; fall back to the log's
+      // `updateAt` so poll-mode updates also show when the photo changed.
+      final String displayTime = hasRealtimeTime
+          ? child.time!
+          : (_lastUpdateAt[name] ?? '');
+      // Overlay the child's `code` as a rounded badge at the top-left corner
+      // of the image (background label), and the photo `time` as a small pill
+      // at the top-right corner (smallest font).
+      final List<Widget> overlays = [];
+      if (child.code != null && child.code!.isNotEmpty) {
+        overlays.add(
+          Positioned(
+            top: 6,
+            left: 6,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+              decoration: BoxDecoration(
+                color: badgeColor,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Text(
+                child.code!,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 8,
+                  fontWeight: FontWeight.bold,
                 ),
-              ],
-            )
+              ),
+            ),
+          ),
+        );
+      }
+      if (isUpdated && displayTime.isNotEmpty) {
+        overlays.add(
+          Positioned(
+            top: 6,
+            right: 6,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+              decoration: BoxDecoration(
+                color: badgeColor,
+                borderRadius: BorderRadius.circular(6),
+              ),
+              child: Text(
+                displayTime,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 7,
+                  fontWeight: FontWeight.w400,
+                ),
+              ),
+            ),
+          ),
+        );
+      }
+      final Widget imageWithBadge = overlays.isNotEmpty
+          ? Stack(children: [imageWidget, ...overlays])
           : imageWidget;
 
       final Widget tile = Column(

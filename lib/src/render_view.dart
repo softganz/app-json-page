@@ -6,7 +6,9 @@ import 'package:json_page/src/render_image.dart';
 import 'package:json_page/src/render_sidebox.dart';
 import 'package:json_page/src/render_webview.dart';
 import 'package:json_page/src/models/page_model.dart';
+import 'package:json_page/src/models/realtime_config.dart';
 import 'package:json_page/src/providers/page_provider.dart';
+import 'package:json_page/src/providers/realtime_provider.dart';
 
 /// A reusable page renderer that fetches and renders a page JSON file
 /// (e.g. `home.json`, `apps.json`) through [pageProvider].
@@ -35,10 +37,16 @@ class RenderView extends ConsumerWidget {
     this.onRoute,
     this.routeBuilder,
     this.webViewHeaders,
+    this.realtime,
   });
 
   /// JSON URL to fetch and render (e.g. `https://example.com/home.json`).
   final String url;
+
+  /// Optional realtime configuration. When provided, `json_page` owns the
+  /// realtime connection (poll / firebase / ws) and applies `photo.new`
+  /// events in-place to the matching camera child — no host wiring needed.
+  final RealtimeConfig? realtime;
 
   /// Title shown in the app bar; falls back to the JSON `title` field.
   final String? title;
@@ -96,6 +104,20 @@ class RenderView extends ConsumerWidget {
     final AsyncValue<PageConfig> feed = ref.watch(pageProvider(url));
     // Realtime push: bumping this tick forces camera tiles to reload images.
     final int reloadTick = ref.watch(cameraReloadTickProvider);
+
+    // When a realtime config is supplied, json_page owns the connection and
+    // applies `photo.new` events in-place to the matching camera child.
+    if (realtime != null) {
+      ref.listen(realtimeProvider(realtime!), (
+        _,
+        AsyncValue<RealtimeEvent> event,
+      ) {
+        final RealtimeEvent? ev = event.valueOrNull;
+        if (ev == null) return;
+        if (ev.type != 'photo.new') return;
+        ref.read(pageProvider(url).notifier).patchItem(ev.data);
+      });
+    }
 
     return Scaffold(
       appBar: AppBar(
@@ -212,6 +234,11 @@ class RenderView extends ConsumerWidget {
         final Widget list = _RenderList(
           widget: data.widget,
           reloadTick: reloadTick,
+          realtimeActive: realtime != null && !realtime!.isPoll,
+          poolInterval:
+              (realtime != null && realtime!.poolInterval.inSeconds > 0)
+              ? realtime!.poolInterval
+              : Duration(seconds: data.widget.cameraPoolInterval),
           onLinkTap: onLinkTap,
           onRefresh: () => ref.read(pageProvider(url).notifier).refresh(),
           webViewHeaders: webViewHeaders,
@@ -225,6 +252,8 @@ class _RenderList extends StatelessWidget {
   const _RenderList({
     required this.widget,
     required this.reloadTick,
+    this.realtimeActive = false,
+    this.poolInterval = const Duration(seconds: 60),
     required this.onRefresh,
     this.onLinkTap,
     this.webViewHeaders,
@@ -232,6 +261,13 @@ class _RenderList extends StatelessWidget {
 
   final PageWidget widget;
   final int reloadTick;
+
+  /// When true, realtime (firebase/ws) owns photo updates, so the per-camera
+  /// 60s poll timer is disabled (passed down to [RenderCameraWidget]).
+  final bool realtimeActive;
+
+  /// Poll interval for `poll` mode, from [RealtimeConfig.poolInterval].
+  final Duration poolInterval;
   final Future<void> Function() onRefresh;
   final void Function(BuildContext context, LinkTarget target)? onLinkTap;
 
@@ -266,10 +302,12 @@ class _RenderList extends StatelessWidget {
               item.padding,
               RenderCameraWidget(
                 item: item,
+                realtimeActive: realtimeActive,
                 cameraPhoto: widget.cameraPhoto,
                 cameraLastPhoto: widget.cameraLastPhoto,
                 cameraRealtimePhoto: widget.cameraRealtimePhoto,
-                reloadTimeSeconds: widget.cameraReloadTime,
+                cameraLogPhoto: widget.cameraLogPhoto,
+                reloadTimeSeconds: poolInterval.inSeconds,
                 externalTick: reloadTick,
                 onLinkTap: onLinkTap,
               ),

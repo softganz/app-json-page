@@ -152,7 +152,7 @@ void main() {
   });
 
   group('RenderCameraWidget code badge', () {
-    testWidgets('shows a green rounded badge with the code at top-left', (
+    testWidgets('shows a gray rounded badge initially (no realtime update)', (
       WidgetTester tester,
     ) async {
       final PageItem item = PageItem.fromJson({
@@ -178,7 +178,65 @@ void main() {
       // The badge text is rendered.
       expect(find.text('R01'), findsOneWidget);
 
-      // The badge uses a green rounded container.
+      // Initially (no realtime photo update) the badge is gray.
+      final Container badge = tester.widget<Container>(
+        find
+            .ancestor(of: find.text('R01'), matching: find.byType(Container))
+            .first,
+      );
+      final BoxDecoration decoration = badge.decoration! as BoxDecoration;
+      expect(decoration.color, Colors.grey);
+      expect(decoration.borderRadius, isNotNull);
+    });
+
+    testWidgets('turns the badge green after a realtime photo update', (
+      WidgetTester tester,
+    ) async {
+      final PageItem item = PageItem.fromJson({
+        'type': 'cameraSet',
+        'children': [
+          {'name': 'radartmd', 'code': 'R01'},
+        ],
+      });
+      final Key key = UniqueKey();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: RenderCameraWidget(
+              key: key,
+              item: item,
+              cameraPhoto: 'https://x.test/',
+              cameraLastPhoto: 'last/',
+              cameraRealtimePhoto: 'realtime/',
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      // Simulate a realtime photo.new: the child now carries a `time`.
+      final PageItem updated = PageItem.fromJson({
+        'type': 'cameraSet',
+        'children': [
+          {'name': 'radartmd', 'code': 'R01', 'time': '2026-07-26 14:30:00'},
+        ],
+      });
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: RenderCameraWidget(
+              key: key,
+              item: updated,
+              cameraPhoto: 'https://x.test/',
+              cameraLastPhoto: 'last/',
+              cameraRealtimePhoto: 'realtime/',
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      // After the update the badge background turns green.
       final Container badge = tester.widget<Container>(
         find
             .ancestor(of: find.text('R01'), matching: find.byType(Container))
@@ -186,7 +244,6 @@ void main() {
       );
       final BoxDecoration decoration = badge.decoration! as BoxDecoration;
       expect(decoration.color, Colors.green);
-      expect(decoration.borderRadius, isNotNull);
     });
 
     testWidgets('renders no badge when code is absent', (
@@ -267,14 +324,14 @@ void main() {
     });
   });
 
-  group('PageWidget.cameraReloadTime', () {
-    test('parses cameraReloadTime from JSON', () {
+  group('PageWidget.cameraPoolInterval', () {
+    test('parses cameraPoolInterval from JSON', () {
       final PageWidget widget = PageWidget.fromJson({
         'show': 'cam',
         'cameraPhoto': 'https://x.test/',
         'cameraLastPhoto': 'last/',
         'cameraRealtimePhoto': 'realtime/',
-        'cameraReloadTime': 30,
+        'cameraPoolInterval': 30,
         'widgets': {
           'cam': {
             'type': 'cameraSet',
@@ -284,7 +341,7 @@ void main() {
           },
         },
       });
-      expect(widget.cameraReloadTime, 30);
+      expect(widget.cameraPoolInterval, 30);
     });
 
     test('defaults to 60 when absent', () {
@@ -302,7 +359,44 @@ void main() {
           },
         },
       });
-      expect(widget.cameraReloadTime, 60);
+      expect(widget.cameraPoolInterval, 60);
+    });
+
+    test('parses cameraLogPhoto from JSON', () {
+      final PageWidget widget = PageWidget.fromJson({
+        'show': 'cam',
+        'cameraPhoto': 'https://x.test/',
+        'cameraLastPhoto': 'last/',
+        'cameraRealtimePhoto': 'realtime/',
+        'cameraLogPhoto': 'last.json',
+        'widgets': {
+          'cam': {
+            'type': 'cameraSet',
+            'children': [
+              {'name': 'radartmd'},
+            ],
+          },
+        },
+      });
+      expect(widget.cameraLogPhoto, 'last.json');
+    });
+
+    test('defaults cameraLogPhoto to empty when absent', () {
+      final PageWidget widget = PageWidget.fromJson({
+        'show': 'cam',
+        'cameraPhoto': 'https://x.test/',
+        'cameraLastPhoto': 'last/',
+        'cameraRealtimePhoto': 'realtime/',
+        'widgets': {
+          'cam': {
+            'type': 'cameraSet',
+            'children': [
+              {'name': 'radartmd'},
+            ],
+          },
+        },
+      });
+      expect(widget.cameraLogPhoto, '');
     });
   });
 }

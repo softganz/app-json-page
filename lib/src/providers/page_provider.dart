@@ -58,14 +58,27 @@ class PageNotifier extends FamilyAsyncNotifier<PageConfig, String> {
   /// (the `data` object of a `photo.new` event). The result is a new
   /// [PageConfig] with the patched item — no network call.
   ///
-  /// No-op when realtime is disabled or no item matches.
+  /// No-op when no item matches. The host only calls this when a realtime
+  /// config is active, so the page JSON `realtime.enabled` flag is not a gate
+  /// here; the `matchBy` / `patch` mappings fall back to sensible defaults
+  /// when the page JSON omits them.
   void patchItem(Map<String, dynamic> eventData) {
     final AsyncValue<PageConfig> current = state;
     if (current is! AsyncData<PageConfig>) return;
     final PageConfig config = current.value;
-    if (!config.realtime.enabled) return;
 
-    final String matchBy = config.realtime.matchBy;
+    // Effective match key + patch mapping (page JSON overrides defaults).
+    final String matchBy = config.realtime.matchBy.isNotEmpty
+        ? config.realtime.matchBy
+        : 'name';
+    final Map<String, String> patch = config.realtime.patch.isNotEmpty
+        ? config.realtime.patch
+        : const {
+            'imageUrl': 'url',
+            'thumbnailUrl': 'thumbnail',
+            'time': 'time',
+          };
+
     final String? matchValue = eventData[matchBy]?.toString();
     if (matchValue == null || matchValue.isEmpty) return;
 
@@ -77,9 +90,15 @@ class PageNotifier extends FamilyAsyncNotifier<PageConfig, String> {
     bool patched = false;
     for (final MapEntry<String, PageItem> e in patchedItems.entries) {
       final PageItem item = e.value;
-      final String? itemMatch = _itemField(item, matchBy);
-      if (itemMatch != matchValue) continue;
-      patchedItems[e.key] = _applyPatch(item, config.realtime.patch, eventData);
+      // Match at the CHILD level: a realtime photo.new event carries a single
+      // camera `name`, so we patch only the child whose match field equals it
+      // (not the whole item). This keeps multi-camera sets from all refreshing
+      // to the same photo.
+      final int childIndex = item.children.indexWhere(
+        (c) => _childField(c, matchBy) == matchValue,
+      );
+      if (childIndex < 0) continue;
+      patchedItems[e.key] = _applyPatch(item, childIndex, patch, eventData);
       patched = true;
       break;
     }
@@ -96,7 +115,8 @@ class PageNotifier extends FamilyAsyncNotifier<PageConfig, String> {
         cameraPhoto: config.widget.cameraPhoto,
         cameraLastPhoto: config.widget.cameraLastPhoto,
         cameraRealtimePhoto: config.widget.cameraRealtimePhoto,
-        cameraReloadTime: config.widget.cameraReloadTime,
+        cameraLogPhoto: config.widget.cameraLogPhoto,
+        cameraPoolInterval: config.widget.cameraPoolInterval,
         items: patchedItems,
       ),
       route: config.route,
@@ -109,18 +129,13 @@ class PageNotifier extends FamilyAsyncNotifier<PageConfig, String> {
     state = AsyncValue.data(newConfig);
   }
 
-  /// Reads a top-level field from a [PageItem] by name.
-  String? _itemField(PageItem item, String field) {
+  /// Reads a field from a [PageChild] by name (used for per-child matching).
+  String? _childField(PageChild child, String field) {
     switch (field) {
       case 'name':
-        return item.children
-            .map((c) => c.name)
-            .where((n) => n != null && n.isNotEmpty)
-            .join(',');
+        return child.name;
       case 'title':
-        return item.title;
-      case 'type':
-        return item.type;
+        return child.title;
       default:
         return null;
     }
@@ -128,22 +143,43 @@ class PageNotifier extends FamilyAsyncNotifier<PageConfig, String> {
 
   /// Applies [patchMap] (itemField → dotted event path) to [item] using values
   /// from [eventData]. Returns a new [PageItem] with updated child attributes.
+  ///
+  /// Only the **matching child** (at [childIndex]) is updated: `time` is
+  /// stored on the child so RenderCameraWidget can reload its live `name.jpg`
+  /// feed immediately. The payload's `url`/`thumbnail` are intentionally
+  /// ignored — the tile keeps rendering its own live feed. All other children
+  /// are left untouched.
   PageItem _applyPatch(
     PageItem item,
+    int childIndex,
     Map<String, String> patchMap,
     Map<String, dynamic> eventData,
   ) {
-    // Resolve event values from dotted paths (e.g. "data.url").
+    // Resolve event values from dotted paths (e.g. "url").
     final Map<String, String?> resolved = {};
     for (final MapEntry<String, String> e in patchMap.entries) {
       resolved[e.key] = _resolvePath(eventData, e.value);
     }
 
-    // Apply to children: imageUrl/thumbnailUrl → child.image; time → child.title suffix.
-    final List<PageChild> newChildren = item.children.map((child) {
-      return child.copyWith(
-        image: resolved['imageUrl'] ?? resolved['thumbnailUrl'] ?? child.image,
-      );
+    // The photo time is shown as a top-right overlay (smallest font) on the
+    // image itself. We deliberately do NOT apply the payload's `url`/
+    // `thumbnail` here: the camera tile keeps rendering its live `name.jpg`
+    // feed and simply reloads it when `time` changes (see RenderCameraWidget,
+    // which watches the child's `time`). This avoids depending on the image
+    // name supplied by the realtime payload.
+    final String? time = resolved['time'];
+
+    final List<PageChild> newChildren = item.children.asMap().entries.map((
+      entry,
+    ) {
+      final int i = entry.key;
+      final PageChild child = entry.value;
+      if (i != childIndex) return child;
+      // A fresh value replaces any previous one (no stacking).
+      final String? newTime = (time != null && time.isNotEmpty)
+          ? time
+          : child.time;
+      return child.copyWith(time: newTime);
     }).toList();
 
     return PageItem(
