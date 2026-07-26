@@ -210,6 +210,7 @@ class PageWidget {
     required this.cameraLastPhoto,
     required this.cameraRealtimePhoto,
     required this.cameraLogPhoto,
+    this.cameraThumbPhoto = '',
     this.cameraPoolInterval = 60,
     required this.items,
   });
@@ -221,6 +222,7 @@ class PageWidget {
       cameraLastPhoto = '',
       cameraRealtimePhoto = '',
       cameraLogPhoto = '',
+      cameraThumbPhoto = '',
       cameraPoolInterval = 60,
       items = const {};
 
@@ -249,6 +251,7 @@ class PageWidget {
       cameraLastPhoto: src['cameraLastPhoto'] as String? ?? '',
       cameraRealtimePhoto: src['cameraRealtimePhoto'] as String? ?? '',
       cameraLogPhoto: src['cameraLogPhoto'] as String? ?? '',
+      cameraThumbPhoto: src['cameraThumbPhoto'] as String? ?? '',
       cameraPoolInterval: _toInt(src['cameraPoolInterval']) ?? 60,
       items: items,
     );
@@ -268,6 +271,13 @@ class PageWidget {
   /// camera's latest `updateAt`. When non-empty, polling reads this file and
   /// reloads only cameras whose `updateAt` changed. When empty, polling falls
   /// back to reloading every camera image.
+
+  /// Optional thumbnail folder (relative to [cameraPhoto]) used for the feed
+  /// images. When non-empty, the tile loads `{name}-th.jpg` from this folder
+  /// instead of the full `{name}.jpg` from [cameraLastPhoto] — drastically
+  /// cutting bandwidth/memory for the small on-screen tiles. Tapping a tile
+  /// can still open the full image via the child's `url`/`webViewUrl`.
+  final String cameraThumbPhoto;
   final String cameraLogPhoto;
   final Map<String, PageItem> items;
 }

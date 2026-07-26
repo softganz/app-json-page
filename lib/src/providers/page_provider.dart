@@ -116,6 +116,7 @@ class PageNotifier extends FamilyAsyncNotifier<PageConfig, String> {
         cameraLastPhoto: config.widget.cameraLastPhoto,
         cameraRealtimePhoto: config.widget.cameraRealtimePhoto,
         cameraLogPhoto: config.widget.cameraLogPhoto,
+        cameraThumbPhoto: config.widget.cameraThumbPhoto,
         cameraPoolInterval: config.widget.cameraPoolInterval,
         items: patchedItems,
       ),

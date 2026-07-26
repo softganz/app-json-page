@@ -398,5 +398,24 @@ void main() {
       });
       expect(widget.cameraLogPhoto, '');
     });
+
+    test('parses cameraThumbPhoto from JSON', () {
+      final PageWidget widget = PageWidget.fromJson({
+        'show': 'cam',
+        'cameraPhoto': 'https://x.test/',
+        'cameraLastPhoto': 'last/',
+        'cameraRealtimePhoto': 'realtime/',
+        'cameraThumbPhoto': 'last/',
+        'widgets': {
+          'cam': {
+            'type': 'cameraSet',
+            'children': [
+              {'name': 'radartmd'},
+            ],
+          },
+        },
+      });
+      expect(widget.cameraThumbPhoto, 'last/');
+    });
   });
 }

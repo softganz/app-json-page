@@ -260,6 +260,19 @@ class _ImageTile extends StatelessWidget {
   final double? borderRadius;
   final void Function(BuildContext context, LinkTarget target)? onLinkTap;
 
+  /// Stable `NetworkImage` per URL. Non-camera images never change, so we
+  /// memoize the provider in a static map keyed by URL. This guarantees the
+  /// same `ImageProvider` instance is reused across rebuilds and scroll
+  /// remounts, so the `ImageCache` keeps serving the cached bytes and the
+  /// image is never re-fetched just because the widget was rebuilt or scrolled
+  /// off-screen and back.
+  static final Map<String, NetworkImage> _imageCache = {};
+
+  NetworkImage _resolveImage() {
+    final String url = child.image!;
+    return _imageCache.putIfAbsent(url, () => NetworkImage(url));
+  }
+
   Future<void> _onTap(BuildContext context) async {
     final void Function(BuildContext, LinkTarget)? handler = onLinkTap;
     if (handler == null) return;
@@ -292,9 +305,10 @@ class _ImageTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final Widget image = Image.network(
-      child.image!,
+    final Widget image = Image(
+      image: _resolveImage(),
       fit: BoxFit.cover,
+      gaplessPlayback: true,
       loadingBuilder: (context, widget, loadingProgress) {
         if (loadingProgress == null) return widget;
         return const Center(child: CircularProgressIndicator());

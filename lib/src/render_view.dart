@@ -9,6 +9,7 @@ import 'package:json_page/src/models/page_model.dart';
 import 'package:json_page/src/models/realtime_config.dart';
 import 'package:json_page/src/providers/page_provider.dart';
 import 'package:json_page/src/providers/realtime_provider.dart';
+import 'package:json_page/src/providers/camera_log_poll_provider.dart';
 
 /// A reusable page renderer that fetches and renders a page JSON file
 /// (e.g. `home.json`, `apps.json`) through [pageProvider].
@@ -105,8 +106,6 @@ class RenderView extends ConsumerWidget {
     // Realtime push: bumping this tick forces camera tiles to reload images.
     final int reloadTick = ref.watch(cameraReloadTickProvider);
 
-    // When a realtime config is supplied, json_page owns the connection and
-    // applies `photo.new` events in-place to the matching camera child.
     if (realtime != null) {
       ref.listen(realtimeProvider(realtime!), (
         _,
@@ -230,10 +229,33 @@ class RenderView extends ConsumerWidget {
 
       case 'widget':
       default:
+        // Page-level `last.json` poll owner (log-driven mode only). A single
+        // provider instance fetches the log once per round and shares the
+        // parsed `name -> updateAt` map with every cameraSet, so scrolling a
+        // new set into view reconciles immediately without a new request.
+        final bool useLogPoll =
+            data.widget.cameraLogPhoto.isNotEmpty &&
+            (realtime == null || realtime!.isPoll);
+        final AsyncValue<CameraLogPollState>? logPoll = useLogPoll
+            ? ref.watch(
+                cameraLogPollProvider(
+                  CameraLogPollParams(
+                    '${data.widget.cameraPhoto}${data.widget.cameraLogPhoto}',
+                    (realtime != null && realtime!.poolInterval.inSeconds > 0)
+                        ? realtime!.poolInterval.inSeconds
+                        : (data.widget.cameraPoolInterval > 0
+                              ? data.widget.cameraPoolInterval
+                              : 60),
+                  ),
+                ),
+              )
+            : null;
+
         // Render the list of widgets.
         final Widget list = _RenderList(
           widget: data.widget,
           reloadTick: reloadTick,
+          logPoll: logPoll,
           realtimeActive: realtime != null && !realtime!.isPoll,
           poolInterval:
               (realtime != null && realtime!.poolInterval.inSeconds > 0)
@@ -252,6 +274,7 @@ class _RenderList extends StatelessWidget {
   const _RenderList({
     required this.widget,
     required this.reloadTick,
+    this.logPoll,
     this.realtimeActive = false,
     this.poolInterval = const Duration(seconds: 60),
     required this.onRefresh,
@@ -261,6 +284,12 @@ class _RenderList extends StatelessWidget {
 
   final PageWidget widget;
   final int reloadTick;
+
+  /// Page-level `last.json` poll state (log-driven mode). When non-null, the
+  /// per-camera widget reconciles against this shared map instead of running
+  /// its own poll timer, so scrolling a new set into view updates immediately
+  /// without a new `last.json` request.
+  final AsyncValue<CameraLogPollState>? logPoll;
 
   /// When true, realtime (firebase/ws) owns photo updates, so the per-camera
   /// 60s poll timer is disabled (passed down to [RenderCameraWidget]).
@@ -307,8 +336,10 @@ class _RenderList extends StatelessWidget {
                 cameraLastPhoto: widget.cameraLastPhoto,
                 cameraRealtimePhoto: widget.cameraRealtimePhoto,
                 cameraLogPhoto: widget.cameraLogPhoto,
+                cameraThumbPhoto: widget.cameraThumbPhoto,
                 reloadTimeSeconds: poolInterval.inSeconds,
                 externalTick: reloadTick,
+                logPoll: logPoll,
                 onLinkTap: onLinkTap,
               ),
             ),

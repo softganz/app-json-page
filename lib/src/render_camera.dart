@@ -2,9 +2,11 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:http/http.dart' as http;
 
 import 'package:json_page/src/models/page_model.dart';
+import 'package:json_page/src/providers/camera_log_poll_provider.dart';
 
 /// Renders a feed item of `type: cameraSet`.
 ///
@@ -22,11 +24,20 @@ class RenderCameraWidget extends StatefulWidget {
     required this.cameraLastPhoto,
     required this.cameraRealtimePhoto,
     this.cameraLogPhoto = '',
+    this.cameraThumbPhoto = '',
     this.reloadTimeSeconds = 60,
     this.externalTick = 0,
     this.realtimeActive = false,
+    this.logPoll,
     this.onLinkTap,
   });
+
+  /// Optional page-level `last.json` poll state. When non-null, this widget
+  /// reconciles against the shared `name -> updateAt` map instead of running
+  /// its own poll timer, so a set that scrolls into view updates immediately
+  /// without a new `last.json` request. When null, the widget falls back to a
+  /// local timer (legacy behaviour / no shared poll available).
+  final AsyncValue<CameraLogPollState>? logPoll;
 
   final PageItem item;
   final String cameraPhoto;
@@ -39,6 +50,11 @@ class RenderCameraWidget extends StatefulWidget {
   /// When empty (or the file is unreachable), polling falls back to reloading
   /// every camera image each round.
   final String cameraLogPhoto;
+
+  /// Optional thumbnail folder (relative to [cameraPhoto]). When non-empty the
+  /// feed loads `{name}-th.jpg` from here instead of the full image, saving
+  /// bandwidth and decode memory on the small tiles.
+  final String cameraThumbPhoto;
 
   /// Camera auto-reload interval in seconds (from page `cameraPoolInterval`).
   /// Defaults to 60 when not provided.
@@ -66,169 +82,106 @@ class RenderCameraWidget extends StatefulWidget {
   State<RenderCameraWidget> createState() => _RenderCameraWidgetState();
 }
 
-/// A single in-flight (or recently completed) log fetch, shared across all
-/// `cameraSet` widgets that poll the same log URL within [_logCacheTtl].
-class _LogCacheEntry {
-  const _LogCacheEntry(this.future, this.expiresAt);
-
-  /// The shared fetch result. Widgets awaiting this future all get the same
-  /// parsed `name -> updateAt` map without extra network requests.
-  final Future<Map<String, String>?> future;
-
-  /// When this entry stops being reused (next poll round re-fetches).
-  final DateTime expiresAt;
-}
-
 class _RenderCameraWidgetState extends State<RenderCameraWidget> {
-  int _tick = 0;
-  Timer? _refreshTimer;
+  /// Latest `updateAt` per camera `name` that we have already shown. Kept
+  /// static so it survives widget disposal when a `cameraSet` scrolls
+  /// off-screen and back — this is what lets scrolling keep the existing image
+  /// instead of reloading every camera on remount. Fed by the shared
+  /// page-level [widget.logPoll] map.
+  static final Map<String, String> _lastUpdateAt = {};
 
-  /// Shared, per-URL cache of the most recent log fetch. Collapses concurrent
-  /// polls from multiple `cameraSet` widgets into a SINGLE network request
-  /// per round (keyed by the log URL). Entries expire after [_logCacheTtl]
-  /// so the next poll round re-fetches fresh data from the server.
-  static final Map<String, _LogCacheEntry> _logCache = {};
+  /// Per-camera cache-bust tick, keyed by camera `name`. Static so it survives
+  /// disposal: a camera's tick only changes when its photo is genuinely new,
+  /// so unchanged cameras keep the same image URL and reuse the cached image
+  /// (scrolling never triggers a reload for them).
+  static final Map<String, int> _cameraTick = {};
 
-  /// How long a cached log fetch stays valid. Must be shorter than the poll
-  /// interval so each round triggers exactly one fresh request, while long
-  /// enough to cover the few-millisecond spread between widget timers.
-  static const Duration _logCacheTtl = Duration(seconds: 5);
-
-  /// Latest `updateAt` per camera `name`, read from the log file. Used to
-  /// detect which cameras changed between polls so only those reload.
-  final Map<String, String> _lastUpdateAt = {};
-
-  /// Whether the log file is currently usable. When false (no `cameraLogPhoto`,
-  /// fetch error, or invalid JSON) we fall back to reloading every camera.
-  bool _logAvailable = false;
-
-  /// Cameras that changed in the most recent poll and should reload this round.
-  final Set<String> _changedNames = {};
-
-  /// Resolves the full log-file URL: `cameraPhoto + cameraLogPhoto`.
-  String get _logUrl => '${widget.cameraPhoto}${widget.cameraLogPhoto}';
-
-  /// Fetches and parses the log file into a `name -> updateAt` map.
+  /// Reconciles THIS widget's cameras against the shared [updateAt] map.
   ///
-  /// Returns `null` on any failure (no log configured, network error, invalid
-  /// JSON) so the caller can fall back to reloading every camera.
-  Future<Map<String, String>?> _fetchLog() async {
-    if (widget.cameraLogPhoto.isEmpty) return null;
-    final String url = _logUrl;
-    final DateTime now = DateTime.now();
-    final _LogCacheEntry? cached = _logCache[url];
-    if (cached != null && cached.expiresAt.isAfter(now)) {
-      // Another widget already fetched (or is fetching) this URL this round.
-      // Reuse the single network request instead of hitting the server again.
-      return cached.future;
+  /// Iterates only this widget's own children (not the whole page map) and
+  /// looks each camera `name` up in [updateAt]. This keeps each `cameraSet`
+  /// independent: a widget only updates its own cameras' last-seen `updateAt`,
+  /// so it never clobbers another widget's change detection (which the old
+  /// full-map `..clear()..addAll` did, causing only the topmost set to update).
+  ///
+  /// Returns the set of this widget's camera names whose `updateAt` changed
+  /// since the last reconcile. When [updateAt] is empty (no log / fetch
+  /// failed) it returns no changes so the currently displayed images are kept
+  /// (scrolling never reloads just because the log is temporarily down).
+  Set<String> _reconcile(Map<String, String> updateAt) {
+    if (updateAt.isEmpty) {
+      // No log / fetch failed: keep the currently displayed images and do NOT
+      // force a reload. Change detection resumes once the log is available.
+      return const {};
     }
-
-    // Cache miss (or expired): own this round's fetch so sibling widgets
-    // share it. The future is stored immediately so concurrent callers within
-    // the TTL reuse the same in-flight request.
-    final Completer<Map<String, String>?> completer =
-        Completer<Map<String, String>?>();
-    _logCache[url] = _LogCacheEntry(completer.future, now.add(_logCacheTtl));
-
-    final String pollStart = _nowHms();
-    debugPrint(
-      '[log] JSON_PAGE:: RenderCamera fetch log $url (poll start $pollStart)',
-    );
-    try {
-      final http.Response res = await http.get(Uri.parse(url));
-      debugPrint(
-        '[log] JSON_PAGE:: RenderCamera log response '
-        'status=${res.statusCode}',
-      );
-      if (res.statusCode != 200) {
-        completer.complete(null);
-        return completer.future;
-      }
-      final dynamic decoded = json.decode(utf8.decode(res.bodyBytes));
-      if (decoded is! Map) {
-        completer.complete(null);
-        return completer.future;
-      }
-      final Map<String, String> result = {};
-      decoded.forEach((key, value) {
-        if (value is Map && value['updateAt'] != null) {
-          result[value['name']?.toString() ?? key.toString()] =
-              value['updateAt'].toString();
-        }
-      });
-      completer.complete(result);
-      return completer.future;
-    } catch (_) {
-      completer.complete(null);
-      return completer.future;
-    }
-  }
-
-  /// Reloads only the cameras whose `updateAt` changed in the log, or every
-  /// camera when the log is unavailable. Returns the names that were reloaded.
-  Future<Set<String>> _pollChanged() async {
-    final Map<String, String>? log = await _fetchLog();
-    if (log == null) {
-      // Fallback: reload every camera (no log or fetch failed).
-      _logAvailable = false;
-      final Set<String> all = {
-        for (final PageChild c in widget.item.children)
-          if ((c.name ?? '').isNotEmpty) c.name!,
-      };
-      _changedNames
-        ..clear()
-        ..addAll(all);
-      return all;
-    }
-    _logAvailable = true;
     final Set<String> changed = {};
-    for (final MapEntry<String, String> e in log.entries) {
-      final String prev = _lastUpdateAt[e.key] ?? '';
-      if (prev != e.value) {
-        changed.add(e.key);
+    for (final PageChild c in widget.item.children) {
+      final String name = c.name ?? '';
+      if (name.isEmpty) continue;
+      final String value = updateAt[name] ?? '';
+      final String prev = _lastUpdateAt[name] ?? '';
+      if (prev != value) {
+        changed.add(name);
+        // Bump only this camera's cache-bust tick so its image refetches.
+        // Cameras that did not change keep their previous tick and reuse the
+        // cached image — scrolling never triggers a reload for them.
+        _cameraTick[name] = (_cameraTick[name] ?? 0) + 1;
         debugPrint(
           '[log] JSON_PAGE:: RenderCamera update image '
-          '"${e.key}" updateAt $prev -> ${e.value}',
+          '"$name" updateAt $prev -> $value',
         );
       }
+      // Record this camera's last-seen value (per-camera, no full-map clear)
+      // so disposal/remount keeps the cached image until a real change.
+      _lastUpdateAt[name] = value;
     }
-    _lastUpdateAt
-      ..clear()
-      ..addAll(log);
-    _changedNames
-      ..clear()
-      ..addAll(changed);
     return changed;
   }
 
   @override
   void didUpdateWidget(covariant RenderCameraWidget oldWidget) {
     super.didUpdateWidget(oldWidget);
-    // Realtime push: a changed externalTick forces an immediate reload.
+    // Realtime push: a changed externalTick forces an immediate reload of every
+    // camera in this set (bump each camera's cache-bust tick).
     if (widget.externalTick != oldWidget.externalTick) {
       if (mounted) {
-        setState(() => _tick++);
+        for (final PageChild c in widget.item.children) {
+          final String n = c.name ?? '';
+          if (n.isNotEmpty) _cameraTick[n] = (_cameraTick[n] ?? 0) + 1;
+        }
+        setState(() {});
       }
     }
     // Realtime photo.new: when a child's photo `time` changes, reload that
-    // child's live image immediately (cache-bust via _tick) so the new photo
-    // shows without waiting for the periodic timer. Only the affected
-    // cameraSet widget reloads — other sets are untouched.
+    // child's live image immediately (bump its cache-bust tick) so the new
+    // photo shows without waiting for the periodic timer. Only the affected
+    // camera reloads — other cameras keep their cached image.
     for (int i = 0; i < widget.item.children.length; i++) {
       final PageChild child = widget.item.children[i];
       final PageChild? oldChild = i < oldWidget.item.children.length
           ? oldWidget.item.children[i]
           : null;
       if (child.time != oldChild?.time && (child.time ?? '').isNotEmpty) {
+        final String n = child.name ?? '';
+        if (n.isNotEmpty) _cameraTick[n] = (_cameraTick[n] ?? 0) + 1;
         if (mounted) {
-          setState(() => _tick++);
+          setState(() {});
           debugPrint(
             '[log] JSON_PAGE:: RenderCamera firebase realtime reload '
-            '(time=${child.time}) for camera "${child.name ?? ''}"',
+            '(time=${child.time}) for camera "$n"',
           );
         }
         break;
       }
+    }
+    // Shared page-level poll: when the poll tick changes, reconcile against the
+    // latest shared map so only cameras whose `updateAt` changed reload. This
+    // fires for every visible set each round (and for a set that just scrolled
+    // into view, because the provider already holds the latest map).
+    final int? tick = widget.logPoll?.valueOrNull?.tick;
+    final int? oldTick = oldWidget.logPoll?.valueOrNull?.tick;
+    if (tick != null && tick != oldTick) {
+      _reconcileAndReload(widget.logPoll!.valueOrNull!.updateAt);
     }
   }
 
@@ -237,101 +190,187 @@ class _RenderCameraWidgetState extends State<RenderCameraWidget> {
     super.initState();
     // Only auto-reload when there is at least one camera (a child with a
     // `name` attribute). Children that use their own `image` are never
-    // reloaded, so a timer would be wasted for image-only sets.
+    // reloaded.
     final bool hasCamera = widget.item.children.any(
       (c) => (c.name ?? '').isNotEmpty,
     );
-    // In realtime mode (firebase/ws) the connection owns photo updates, so we
-    // must NOT run the periodic poll timer — otherwise it would reload every
-    // 60s regardless of realtime. Only start the timer when realtime is off.
-    if (hasCamera && !widget.realtimeActive) {
+    if (!hasCamera) return;
+
+    if (widget.realtimeActive) {
+      // Realtime (firebase/ws) owns photo updates; no poll timer.
       debugPrint(
-        '[log] JSON_PAGE:: RenderCamera start auto-reload every '
+        '[log] JSON_PAGE:: RenderCamera realtime active — poll disabled '
+        'for "${widget.item.title ?? ''}"',
+      );
+      return;
+    }
+
+    if (widget.logPoll != null) {
+      // Page-level poll owns `last.json`. Reconcile immediately on mount so a
+      // set that scrolls into view updates right away (using the map the
+      // page-level provider already fetched — no new `last.json` request).
+      final Map<String, String> map =
+          widget.logPoll!.valueOrNull?.updateAt ?? const {};
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _reconcileAndReload(map);
+      });
+    } else {
+      // No shared poll available: fall back to a local timer (legacy path).
+      debugPrint(
+        '[log] JSON_PAGE:: RenderCamera start local auto-reload every '
         '${widget.reloadTimeSeconds > 0 ? widget.reloadTimeSeconds : 60}s '
         'for "${widget.item.title ?? ''}"',
       );
-      _scheduleRefresh();
-    } else if (hasCamera && widget.realtimeActive) {
-      debugPrint(
-        '[log] JSON_PAGE:: RenderCamera realtime active — poll timer disabled '
-        'for "${widget.item.title ?? ''}"',
-      );
+      _startLocalTimer();
     }
   }
 
-  void _scheduleRefresh() {
-    _refreshTimer?.cancel();
+  /// Reconciles the widget's cameras against [updateAt] and reloads only the
+  /// cameras whose photo is genuinely new (their cache-bust tick was bumped in
+  /// [_reconcile]). When nothing changed, rebuilds so a previous round's green
+  /// "updated" highlight clears (badges revert to gray); unchanged cameras keep
+  /// their tick and cached image — no network reload.
+  void _reconcileAndReload(Map<String, String> updateAt) {
+    final Set<String> changed = _reconcile(updateAt);
+    if (!mounted) return;
+    if (changed.isEmpty) {
+      debugPrint(
+        '[log] JSON_PAGE:: RenderCamera poll '
+        'no camera changed for "${widget.item.title ?? ''}"',
+      );
+      setState(() {});
+      return;
+    }
+    for (final String name in changed) {
+      final PageChild? child = widget.item.children
+          .where((c) => (c.name ?? '') == name)
+          .firstOrNull;
+      final String url = child != null
+          ? _buildUrl(child)
+          : '${widget.cameraPhoto}${widget.cameraLastPhoto}$name.jpg';
+      debugPrint(
+        '[log] JSON_PAGE:: RenderCamera updating image "$name" -> $url',
+      );
+    }
+    setState(() {});
+  }
+
+  /// Legacy fallback: a per-widget timer used only when no shared page-level
+  /// poll is available. Fetches `last.json` locally each interval.
+  Timer? _localTimer;
+  void _startLocalTimer() {
+    _localTimer?.cancel();
     final int seconds = widget.reloadTimeSeconds > 0
         ? widget.reloadTimeSeconds
         : 60;
-    _refreshTimer = Timer(Duration(seconds: seconds), () {
+    _localTimer = Timer.periodic(Duration(seconds: seconds), (_) {
       if (!mounted) return;
-      // This branch only runs when the poll timer is active (realtime off),
-      // so the reload log reflects genuine periodic polling — never a
-      // realtime-driven refresh.
-      _pollChanged().then((changed) {
-        if (!mounted) return;
-        if (changed.isEmpty) {
-          debugPrint(
-            '[log] JSON_PAGE:: RenderCamera poll #${_tick + 1} '
-            'no camera changed for "${widget.item.title ?? ''}"',
-          );
-          // No camera updated this round: rebuild so the green "updated"
-          // highlight from a previous round is cleared and badges revert to
-          // gray. We do NOT bump [_tick], so unchanged cameras keep showing
-          // their last loaded frame (no extra network reload).
-          if (mounted) setState(() {});
-          _scheduleRefresh();
-          return;
-        }
-        for (final String name in changed) {
-          debugPrint(
-            '[log] JSON_PAGE:: RenderCamera updating image "$name" '
-            '-> ${widget.cameraPhoto}${widget.cameraLastPhoto}$name.jpg',
-          );
-        }
-        setState(() => _tick++);
-        _scheduleRefresh();
-      });
+      // Local fetch via the shared cache so multiple local-timer widgets still
+      // collapse into one request per round.
+      _fetchLogLocal().then((updateAt) => _reconcileAndReload(updateAt));
     });
+  }
+
+  /// Local `last.json` fetch (legacy fallback path). Returns an empty map on
+  /// failure so the caller falls back to reloading every camera.
+  Future<Map<String, String>> _fetchLogLocal() async {
+    if (widget.cameraLogPhoto.isEmpty) return const {};
+    try {
+      final http.Response res = await http.get(
+        Uri.parse('${widget.cameraPhoto}${widget.cameraLogPhoto}'),
+      );
+      if (res.statusCode != 200) return const {};
+      final dynamic decoded = json.decode(utf8.decode(res.bodyBytes));
+      if (decoded is! Map) return const {};
+      final Map<String, String> out = {};
+      decoded.forEach((key, value) {
+        if (value is Map && value['updateAt'] != null) {
+          out[value['name']?.toString() ?? key.toString()] = value['updateAt']
+              .toString();
+        }
+      });
+      return out;
+    } catch (_) {
+      return const {};
+    }
   }
 
   @override
   void dispose() {
-    _refreshTimer?.cancel();
+    _localTimer?.cancel();
     super.dispose();
-  }
-
-  /// Current time formatted as `HH:MM:SS`, used for poll-start timestamps.
-  String _nowHms() {
-    final DateTime n = DateTime.now();
-    String p(int v) => v.toString().padLeft(2, '0');
-    return '${p(n.hour)}:${p(n.minute)}:${p(n.second)}';
   }
 
   String _buildUrl(PageChild child) {
     final String name = child.name ?? '';
-    final String base =
-        '${widget.cameraPhoto}${widget.cameraLastPhoto}$name.jpg';
-    // Cache-bust so the network image reloads on each tick. When log-driven
-    // polling is active, only cameras in [_changedNames] get a fresh tick;
-    // others keep showing their last loaded frame (no extra network hit).
-    final int tick = (_logAvailable && !_changedNames.contains(name))
-        ? _tick - 1
-        : _tick;
+    // When a thumbnail folder is configured, load `{name}-th.jpg` from it
+    // instead of the full `{name}.jpg` — the server pre-generates these small
+    // images so the feed never downloads the multi-MB originals.
+    final String folder = widget.cameraThumbPhoto.isNotEmpty
+        ? widget.cameraThumbPhoto
+        : widget.cameraLastPhoto;
+    final String suffix = widget.cameraThumbPhoto.isNotEmpty
+        ? '-th.jpg'
+        : '.jpg';
+    final String base = '${widget.cameraPhoto}$folder$name$suffix';
+    // Cache-bust per camera. A camera's tick only changes when its photo is
+    // genuinely new (bumped in [_reconcile] or by a realtime event), so
+    // unchanged cameras keep the same URL and reuse the cached image — scrolling
+    // never triggers a reload for them.
+    final int tick = _cameraTick[name] ?? 0;
     return '$base?t=$tick';
   }
 
-  Widget _cameraImage(PageChild child, {double? height, double? borderRadius}) {
+  /// Builds the full (non-thumbnail) image URL for [child], always from
+  /// [cameraLastPhoto] + `{name}.jpg`. Used as the fallback when a thumbnail
+  /// is missing on the server.
+  String _buildFullUrl(PageChild child) {
+    final String name = child.name ?? '';
+    final String base =
+        '${widget.cameraPhoto}${widget.cameraLastPhoto}$name.jpg';
+    final int tick = _cameraTick[name] ?? 0;
+    return '$base?t=$tick';
+  }
+
+  Widget _cameraImage(
+    PageChild child, {
+    double? height,
+    double? borderRadius,
+    int? cacheWidth,
+  }) {
+    final String url = _buildUrl(child);
+    final String fullUrl = _buildFullUrl(child);
+    // When a thumbnail is configured and differs from the full image, fall
+    // back to the full image if the thumbnail is missing on the server.
+    final bool canFallback =
+        widget.cameraThumbPhoto.isNotEmpty && url != fullUrl;
     final Widget image = Image.network(
-      _buildUrl(child),
+      url,
       fit: BoxFit.cover,
       width: double.infinity,
       height: height,
+      // Cap the decoded bitmap to the on-screen pixel width so even if a full
+      // image slips through, it is decoded small (saves GPU/memory).
+      cacheWidth: cacheWidth,
       // Keep showing the previous frame until the new image is fully loaded,
       // then swap in place (no clearing/placeholder between refreshes).
       gaplessPlayback: true,
-      errorBuilder: (context, error, stackTrace) => _imagePlaceholder(height),
+      errorBuilder: (context, error, stackTrace) {
+        if (canFallback) {
+          // Thumbnail missing → load the full image instead.
+          return Image.network(
+            fullUrl,
+            fit: BoxFit.cover,
+            width: double.infinity,
+            height: height,
+            cacheWidth: cacheWidth,
+            gaplessPlayback: true,
+            errorBuilder: (context, error, stackTrace) =>
+                _imagePlaceholder(height),
+          );
+        }
+        return _imagePlaceholder(height);
+      },
     );
 
     // Round by default (12). An item-level `photoBorderRadius` or a
@@ -490,6 +529,9 @@ class _RenderCameraWidgetState extends State<RenderCameraWidget> {
       // If the child declares its own `image`, render it like the `image`
       // type; otherwise render the live camera feed built from `name`.
       final bool hasImage = child.image != null && child.image!.isNotEmpty;
+      final int? cacheWidth = hasImage
+          ? null
+          : (tileWidth * MediaQuery.of(context).devicePixelRatio).ceil();
       final Widget imageWidget = hasImage
           ? _childImage(
               child,
@@ -500,20 +542,21 @@ class _RenderCameraWidgetState extends State<RenderCameraWidget> {
               child,
               height: resolveHeight(tileWidth),
               borderRadius: widget.item.photoBorderRadius,
+              cacheWidth: cacheWidth,
             );
 
-      // A camera is "updated" when it changed in the latest poll round
-      // (log-driven mode, tracked in [_changedNames]) OR when a realtime
-      // photo event set its `time` (realtime mode). Updated cameras show a
-      // green background on BOTH the code badge and the time pill; otherwise
-      // they stay gray (initial state). Cameras that never change keep gray.
+      // A camera is "live" (green) when we have ever seen a photo for it —
+      // tracked in the static [_lastUpdateAt] map, which survives widget
+      // disposal so scrolling a set off-screen and back keeps its green badge
+      // and time instead of reverting to gray/empty. A realtime `time` also
+      // marks it live. Cameras that have never reported a photo stay gray.
       final String name = child.name ?? '';
-      final bool changedThisRound = _changedNames.contains(name);
       final bool hasRealtimeTime = child.time != null && child.time!.isNotEmpty;
-      final bool isUpdated = changedThisRound || hasRealtimeTime;
+      final bool hasLogTime = (_lastUpdateAt[name] ?? '').isNotEmpty;
+      final bool isUpdated = hasRealtimeTime || hasLogTime;
       final Color badgeColor = isUpdated ? Colors.green : Colors.grey;
       // Time to display: prefer the realtime `time`; fall back to the log's
-      // `updateAt` so poll-mode updates also show when the photo changed.
+      // `updateAt` so poll-mode updates also show (and persist across scroll).
       final String displayTime = hasRealtimeTime
           ? child.time!
           : (_lastUpdateAt[name] ?? '');
