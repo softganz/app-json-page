@@ -94,6 +94,8 @@ class RenderView extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final AsyncValue<PageConfig> feed = ref.watch(pageProvider(url));
+    // Realtime push: bumping this tick forces camera tiles to reload images.
+    final int reloadTick = ref.watch(cameraReloadTickProvider);
 
     return Scaffold(
       appBar: AppBar(
@@ -128,7 +130,7 @@ class RenderView extends ConsumerWidget {
             message: error.toString(),
             onRetry: () => ref.read(pageProvider(url).notifier).refresh(),
           ),
-          data: (data) => _renderByType(context, data, ref),
+          data: (data) => _renderByType(context, data, ref, reloadTick),
         ),
       ),
     );
@@ -147,7 +149,12 @@ class RenderView extends ConsumerWidget {
   }
 
   /// Dispatches rendering to one of the three top-level render formats.
-  Widget _renderByType(BuildContext context, PageConfig data, WidgetRef ref) {
+  Widget _renderByType(
+    BuildContext context,
+    PageConfig data,
+    WidgetRef ref,
+    int reloadTick,
+  ) {
     switch (data.type) {
       case 'route':
         // Render a named route inline (keeping this page's AppBar and the
@@ -204,6 +211,7 @@ class RenderView extends ConsumerWidget {
         // Render the list of widgets.
         final Widget list = _RenderList(
           widget: data.widget,
+          reloadTick: reloadTick,
           onLinkTap: onLinkTap,
           onRefresh: () => ref.read(pageProvider(url).notifier).refresh(),
           webViewHeaders: webViewHeaders,
@@ -216,12 +224,14 @@ class RenderView extends ConsumerWidget {
 class _RenderList extends StatelessWidget {
   const _RenderList({
     required this.widget,
+    required this.reloadTick,
     required this.onRefresh,
     this.onLinkTap,
     this.webViewHeaders,
   });
 
   final PageWidget widget;
+  final int reloadTick;
   final Future<void> Function() onRefresh;
   final void Function(BuildContext context, LinkTarget target)? onLinkTap;
 
@@ -260,6 +270,7 @@ class _RenderList extends StatelessWidget {
                 cameraLastPhoto: widget.cameraLastPhoto,
                 cameraRealtimePhoto: widget.cameraRealtimePhoto,
                 reloadTimeSeconds: widget.cameraReloadTime,
+                externalTick: reloadTick,
                 onLinkTap: onLinkTap,
               ),
             ),

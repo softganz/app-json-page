@@ -51,6 +51,133 @@ class PageNotifier extends FamilyAsyncNotifier<PageConfig, String> {
     state = await AsyncValue.guard(_fetch);
   }
 
+  /// Applies a realtime event payload to the loaded page config in-place.
+  ///
+  /// Finds the matching feed item by [RealtimePatchConfig.matchBy] (e.g. the
+  /// item's `name`) and applies the `patch` field mappings from [eventData]
+  /// (the `data` object of a `photo.new` event). The result is a new
+  /// [PageConfig] with the patched item — no network call.
+  ///
+  /// No-op when realtime is disabled or no item matches.
+  void patchItem(Map<String, dynamic> eventData) {
+    final AsyncValue<PageConfig> current = state;
+    if (current is! AsyncData<PageConfig>) return;
+    final PageConfig config = current.value;
+    if (!config.realtime.enabled) return;
+
+    final String matchBy = config.realtime.matchBy;
+    final String? matchValue = eventData[matchBy]?.toString();
+    if (matchValue == null || matchValue.isEmpty) return;
+
+    final Map<String, PageItem> patchedItems = {
+      for (final MapEntry<String, PageItem> e in config.widget.items.entries)
+        e.key: e.value,
+    };
+
+    bool patched = false;
+    for (final MapEntry<String, PageItem> e in patchedItems.entries) {
+      final PageItem item = e.value;
+      final String? itemMatch = _itemField(item, matchBy);
+      if (itemMatch != matchValue) continue;
+      patchedItems[e.key] = _applyPatch(item, config.realtime.patch, eventData);
+      patched = true;
+      break;
+    }
+
+    if (!patched) return;
+
+    final PageConfig newConfig = PageConfig(
+      type: config.type,
+      title: config.title,
+      margin: config.margin,
+      padding: config.padding,
+      widget: PageWidget(
+        show: config.widget.show,
+        cameraPhoto: config.widget.cameraPhoto,
+        cameraLastPhoto: config.widget.cameraLastPhoto,
+        cameraRealtimePhoto: config.widget.cameraRealtimePhoto,
+        cameraReloadTime: config.widget.cameraReloadTime,
+        items: patchedItems,
+      ),
+      route: config.route,
+      routeArgs: config.routeArgs,
+      logo: config.logo,
+      url: config.url,
+      onLoadUrl: config.onLoadUrl,
+      realtime: config.realtime,
+    );
+    state = AsyncValue.data(newConfig);
+  }
+
+  /// Reads a top-level field from a [PageItem] by name.
+  String? _itemField(PageItem item, String field) {
+    switch (field) {
+      case 'name':
+        return item.children
+            .map((c) => c.name)
+            .where((n) => n != null && n.isNotEmpty)
+            .join(',');
+      case 'title':
+        return item.title;
+      case 'type':
+        return item.type;
+      default:
+        return null;
+    }
+  }
+
+  /// Applies [patchMap] (itemField → dotted event path) to [item] using values
+  /// from [eventData]. Returns a new [PageItem] with updated child attributes.
+  PageItem _applyPatch(
+    PageItem item,
+    Map<String, String> patchMap,
+    Map<String, dynamic> eventData,
+  ) {
+    // Resolve event values from dotted paths (e.g. "data.url").
+    final Map<String, String?> resolved = {};
+    for (final MapEntry<String, String> e in patchMap.entries) {
+      resolved[e.key] = _resolvePath(eventData, e.value);
+    }
+
+    // Apply to children: imageUrl/thumbnailUrl → child.image; time → child.title suffix.
+    final List<PageChild> newChildren = item.children.map((child) {
+      return child.copyWith(
+        image: resolved['imageUrl'] ?? resolved['thumbnailUrl'] ?? child.image,
+      );
+    }).toList();
+
+    return PageItem(
+      type: item.type,
+      title: item.title,
+      url: item.url,
+      webViewUrl: item.webViewUrl,
+      children: newChildren,
+      padding: item.padding,
+      layout: item.layout,
+      gap: item.gap,
+      columns: item.columns,
+      photoWidth: item.photoWidth,
+      photoHeight: item.photoHeight,
+      wrap: item.wrap,
+      photoBorderRadius: item.photoBorderRadius,
+    );
+  }
+
+  /// Resolves a dotted path (e.g. `data.url`) inside [root].
+  String? _resolvePath(Map<String, dynamic> root, String path) {
+    final List<String> parts = path.split('.');
+    dynamic cursor = root;
+    for (final String part in parts) {
+      if (cursor is Map<String, dynamic> && cursor.containsKey(part)) {
+        cursor = cursor[part];
+      } else {
+        return null;
+      }
+    }
+    if (cursor == null) return null;
+    return cursor.toString();
+  }
+
   /// Fires a non-blocking GET to [onLoadUrl] when a page JSON is loaded.
   /// Appends a `time` query parameter set to the current epoch milliseconds.
   /// Used as a side-effect ping (e.g. analytics/notify) and never blocks
@@ -85,6 +212,14 @@ class PageNotifier extends FamilyAsyncNotifier<PageConfig, String> {
         });
   }
 }
+
+/// Global tick that forces every [RenderCameraWidget] to reload its image.
+///
+/// Incremented by the host when a realtime photo event arrives (e.g. a
+/// Firebase RTDB `photo.new` push). [RenderView] reads this and forwards the
+/// value to each camera tile, which reloads the displayed image immediately
+/// instead of waiting for its periodic timer.
+final cameraReloadTickProvider = StateProvider<int>((ref) => 0);
 
 /// Removes `//` and `/* ... */` comments from a JSONC-like string while keeping
 /// `//` that appears inside string literals (e.g. `"https://..."`).

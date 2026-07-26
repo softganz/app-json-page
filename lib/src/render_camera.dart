@@ -20,6 +20,7 @@ class RenderCameraWidget extends StatefulWidget {
     required this.cameraLastPhoto,
     required this.cameraRealtimePhoto,
     this.reloadTimeSeconds = 60,
+    this.externalTick = 0,
     this.onLinkTap,
   });
 
@@ -31,6 +32,12 @@ class RenderCameraWidget extends StatefulWidget {
   /// Camera auto-reload interval in seconds (from page `cameraReloadTime`).
   /// Defaults to 60 when not provided.
   final int reloadTimeSeconds;
+
+  /// External tick that forces an immediate image reload when it changes.
+  /// Driven by realtime photo.new events (e.g. Firebase RTDB push) so the
+  /// displayed camera image refreshes the moment a new photo is available,
+  /// without waiting for the periodic [reloadTimeSeconds] timer.
+  final int externalTick;
 
   /// Called when a tappable child is tapped. When null, taps are ignored.
   final void Function(BuildContext context, LinkTarget target)? onLinkTap;
@@ -45,6 +52,17 @@ class RenderCameraWidget extends StatefulWidget {
 class _RenderCameraWidgetState extends State<RenderCameraWidget> {
   int _tick = 0;
   Timer? _refreshTimer;
+
+  @override
+  void didUpdateWidget(covariant RenderCameraWidget oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // Realtime push: a changed externalTick forces an immediate reload.
+    if (widget.externalTick != oldWidget.externalTick) {
+      if (mounted) {
+        setState(() => _tick++);
+      }
+    }
+  }
 
   @override
   void initState() {

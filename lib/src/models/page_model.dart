@@ -42,6 +42,7 @@ class PageConfig {
     this.onLoadUrl,
     this.margin,
     this.padding,
+    this.realtime = const RealtimePatchConfig.disabled(),
   });
 
   /// Optional page-wide margin applied around the whole rendered content.
@@ -104,6 +105,9 @@ class PageConfig {
       logo: json['logo'] as String?,
       url: url,
       onLoadUrl: json['onLoadUrl'] as String?,
+      realtime: RealtimePatchConfig.fromJson(
+        json['realtime'] as Map<String, dynamic>?,
+      ),
     );
   }
 
@@ -135,6 +139,68 @@ class PageConfig {
   /// Optional
   /// Optional URL pinged (non-blocking) when this page JSON is loaded.
   final String? onLoadUrl;
+
+  /// Realtime in-place patch config (parsed from the top-level `realtime`
+  /// block). When [RealtimePatchConfig.enabled] is false, the host should not
+  /// attempt to patch items from WS events.
+  final RealtimePatchConfig realtime;
+}
+
+/// Describes how a realtime event (e.g. `photo.new`) is applied to a feed item
+/// in-place, without a full refetch.
+///
+/// Parsed from the top-level `realtime` block in a page JSON:
+/// ```jsonc
+/// "realtime": {
+///   "enabled": true,
+///   "matchBy": "name",            // item key used to find the target
+///   "patch": {                    // event field → item field mapping
+///     "imageUrl": "data.url",
+///     "thumbnailUrl": "data.thumbnail",
+///     "time": "data.time"
+///   }
+/// }
+/// ```
+class RealtimePatchConfig {
+  const RealtimePatchConfig({
+    required this.enabled,
+    required this.matchBy,
+    required this.patch,
+  });
+
+  /// Empty config (realtime disabled / absent).
+  const RealtimePatchConfig.disabled()
+    : enabled = false,
+      matchBy = '',
+      patch = const {};
+
+  factory RealtimePatchConfig.fromJson(Map<String, dynamic>? json) {
+    if (json == null) return const RealtimePatchConfig.disabled();
+    final bool enabled = json['enabled'] == true;
+    if (!enabled) return const RealtimePatchConfig.disabled();
+    final String matchBy = (json['matchBy'] as String? ?? '').trim();
+    final Map<String, dynamic>? rawPatch =
+        json['patch'] as Map<String, dynamic>?;
+    final Map<String, String> patch = (rawPatch ?? {}).map(
+      (key, value) => MapEntry(key, value.toString()),
+    );
+    return RealtimePatchConfig(
+      enabled: enabled,
+      matchBy: matchBy,
+      patch: patch,
+    );
+  }
+
+  /// Whether realtime patching is active for this page.
+  final bool enabled;
+
+  /// Item attribute used to locate the target item (e.g. `"name"`).
+  final String matchBy;
+
+  /// Mapping of item field → dotted path into the event `data` payload.
+  /// e.g. `{"imageUrl": "data.url"}` means: set item's `imageUrl` to
+  /// `event.data["url"]`.
+  final Map<String, String> patch;
 }
 
 class PageWidget {
@@ -374,6 +440,38 @@ class PageChild {
   /// width. Falls back to the item-level `photoHeight` when absent.
   final String? photoHeight;
   final double? borderRadius;
+
+  PageChild copyWith({
+    String? image,
+    String? url,
+    String? webViewUrl,
+    String? route,
+    Map<String, dynamic>? routeArgs,
+    String? title,
+    String? code,
+    String? name,
+    double? height,
+    double? width,
+    String? photoWidth,
+    String? photoHeight,
+    double? borderRadius,
+  }) {
+    return PageChild(
+      image: image ?? this.image,
+      url: url ?? this.url,
+      webViewUrl: webViewUrl ?? this.webViewUrl,
+      route: route ?? this.route,
+      routeArgs: routeArgs ?? this.routeArgs,
+      title: title ?? this.title,
+      code: code ?? this.code,
+      name: name ?? this.name,
+      height: height ?? this.height,
+      width: width ?? this.width,
+      photoWidth: photoWidth ?? this.photoWidth,
+      photoHeight: photoHeight ?? this.photoHeight,
+      borderRadius: borderRadius ?? this.borderRadius,
+    );
+  }
 }
 
 double? _toDouble(dynamic value) {
