@@ -32,7 +32,7 @@ class RenderWebviewWidget extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final String? url = _resolveUrl();
-    debugPrint('[RenderWebview] title="${item.title}" url="$url"');
+    debugPrint('[log] RenderWebview title="${item.title}" url="$url"');
     if (url == null || url.isEmpty) {
       return const SizedBox.shrink();
     }

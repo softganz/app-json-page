@@ -61,7 +61,7 @@ class RealtimeService {
     if (_disposed) return;
     _cancelReconnect();
     try {
-      log('JSON_PAGE_WS :: connecting to $wsUrl');
+      log('[log] JSON_PAGE_WS :: connecting to $wsUrl');
       final Uri uri = _normalizeWsUri(wsUrl);
       _channel = WebSocketChannel.connect(uri);
       _sub = _channel!.stream.listen(
@@ -71,7 +71,7 @@ class RealtimeService {
       );
       if (authMessage != null) {
         final Map<String, dynamic> msg = await authMessage!;
-        log('JSON_PAGE_WS :: sending auth');
+        log('[log] JSON_PAGE_WS :: sending auth');
         _channel!.sink.add(jsonEncode(msg));
       }
       _startPing();
@@ -88,7 +88,7 @@ class RealtimeService {
     try {
       json = jsonDecode(message) as Map<String, dynamic>;
     } catch (e) {
-      log('JSON_PAGE_WS :: failed to decode message: $message');
+      log('[log] JSON_PAGE_WS :: failed to decode message: $message');
       return;
     }
     final String type = json['type'] as String? ?? '';
@@ -96,11 +96,11 @@ class RealtimeService {
       _connected = true;
       _reconnectAttempts = 0;
       onConnectionState?.call(true);
-      log('JSON_PAGE_WS :: auth.ok');
+      log('[log] JSON_PAGE_WS :: auth.ok');
       return;
     }
     if (type == 'auth.error') {
-      log('JSON_PAGE_WS :: auth.error ${json['message']}');
+      log('[log] JSON_PAGE_WS :: auth.error ${json['message']}');
       _connected = false;
       onConnectionState?.call(false);
       disconnect();
@@ -112,14 +112,14 @@ class RealtimeService {
   }
 
   void _onError(Object error, StackTrace stack) {
-    log('JSON_PAGE_WS :: stream error', error: error, stackTrace: stack);
+    log('[log] JSON_PAGE_WS :: stream error', error: error, stackTrace: stack);
     _connected = false;
     onConnectionState?.call(false);
     _scheduleReconnect();
   }
 
   void _onDone() {
-    log('JSON_PAGE_WS :: connection closed');
+    log('[log] JSON_PAGE_WS :: connection closed');
     _connected = false;
     onConnectionState?.call(false);
     _stopPing();
@@ -133,7 +133,7 @@ class RealtimeService {
         try {
           _channel?.sink.add(jsonEncode({'type': 'ping'}));
         } catch (e) {
-          log('JSON_PAGE_WS :: ping failed: $e');
+          log('[log] JSON_PAGE_WS :: ping failed: $e');
         }
       }
     });
@@ -164,7 +164,7 @@ class RealtimeService {
   /// Cancels any pending reconnect timer and connects right away.
   void reconnectNow() {
     if (_disposed) return;
-    log('JSON_PAGE_WS :: reconnectNow()');
+    log('[log] JSON_PAGE_WS :: reconnectNow()');
     _cancelReconnect();
     connect();
   }
@@ -256,7 +256,7 @@ class FirebaseRealtimeService {
   /// Cancels any pending reconnect timer and connects right away.
   void reconnectNow() {
     if (_disposed) return;
-    log('JSON_PAGE_FB :: reconnectNow()');
+    log('[log] JSON_PAGE_FB :: reconnectNow()');
     _cancelReconnect();
     connect();
   }
@@ -266,7 +266,7 @@ class FirebaseRealtimeService {
     _cancelReconnect();
     try {
       log(
-        'JSON_PAGE_FB :: connecting SSE to ${_streamUri.toString().replaceAll(_currentToken, '***')}',
+        '[log] JSON_PAGE_FB :: connecting SSE to ${_streamUri.toString().replaceAll(_currentToken, '***')}',
       );
       _client = http.Client();
       final http.Request request = http.Request('GET', _streamUri)
@@ -275,7 +275,9 @@ class FirebaseRealtimeService {
       if (response.statusCode == 401 || response.statusCode == 403) {
         // Auth error: the token likely expired (e.g. after a long sleep).
         // Refresh it and reconnect with the new token.
-        log('JSON_PAGE_FB :: HTTP ${response.statusCode}, refreshing token');
+        log(
+          '[log] JSON_PAGE_FB :: HTTP ${response.statusCode}, refreshing token',
+        );
         final bool refreshed = await _refreshToken();
         _client?.close();
         _client = null;
@@ -287,7 +289,9 @@ class FirebaseRealtimeService {
         return;
       }
       if (response.statusCode != 200) {
-        log('JSON_PAGE_FB :: HTTP ${response.statusCode}, will reconnect');
+        log(
+          '[log] JSON_PAGE_FB :: HTTP ${response.statusCode}, will reconnect',
+        );
         _scheduleReconnect();
         return;
       }
@@ -306,7 +310,7 @@ class FirebaseRealtimeService {
             cancelOnError: false,
           );
     } catch (e, stack) {
-      log('JSON_PAGE_FB :: connect error', error: e, stackTrace: stack);
+      log('[log] JSON_PAGE_FB :: connect error', error: e, stackTrace: stack);
       _scheduleReconnect();
     }
   }
@@ -347,7 +351,7 @@ class FirebaseRealtimeService {
       // Compare against the activity counter captured at connect time.
       if (_lastActivity <= _watchdogBaseline) {
         log(
-          'JSON_PAGE_FB :: watchdog — no activity for '
+          '[log] JSON_PAGE_FB :: watchdog — no activity for '
           '${watchdogInterval.inSeconds}s, forcing reconnect',
         );
         _connected = false;
@@ -381,11 +385,11 @@ class FirebaseRealtimeService {
           : null;
       if (newToken != null && newToken.isNotEmpty) {
         _currentToken = newToken;
-        log('JSON_PAGE_FB :: token refreshed');
+        log('[log] JSON_PAGE_FB :: token refreshed');
         return true;
       }
     } catch (e) {
-      log('JSON_PAGE_FB :: token refresh error: $e');
+      log('[log] JSON_PAGE_FB :: token refresh error: $e');
     }
     return false;
   }
@@ -395,7 +399,7 @@ class FirebaseRealtimeService {
     try {
       decoded = jsonDecode(raw);
     } catch (e) {
-      log('JSON_PAGE_FB :: failed to decode data: $raw');
+      log('J[log] SON_PAGE_FB :: failed to decode data: $raw');
       return;
     }
     if (decoded == null) return;
@@ -453,7 +457,7 @@ class FirebaseRealtimeService {
   }
 
   void _onError(Object error, StackTrace stack) {
-    log('JSON_PAGE_FB :: stream error', error: error, stackTrace: stack);
+    log('[log] JSON_PAGE_FB :: stream error', error: error, stackTrace: stack);
     _connected = false;
     onConnectionState?.call(false);
     _stopWatchdog();
@@ -461,7 +465,7 @@ class FirebaseRealtimeService {
   }
 
   void _onDone() {
-    log('JSON_PAGE_FB :: stream closed');
+    log('[log] JSON_PAGE_FB :: stream closed');
     _connected = false;
     onConnectionState?.call(false);
     _stopWatchdog();
@@ -473,7 +477,9 @@ class FirebaseRealtimeService {
     _cancelReconnect();
     final int delay = [1, 2, 4, 8, 16, 30][_reconnectAttempts.clamp(0, 5)];
     _reconnectAttempts++;
-    log('JSON_PAGE_FB :: reconnect in ${delay}s (attempt $_reconnectAttempts)');
+    log(
+      '[log] JSON_PAGE_FB :: reconnect in ${delay}s (attempt $_reconnectAttempts)',
+    );
     _reconnectTimer = Timer(Duration(seconds: delay), () {
       if (!_disposed) connect();
     });

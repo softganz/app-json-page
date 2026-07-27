@@ -27,7 +27,7 @@ class PageNotifier extends FamilyAsyncNotifier<PageConfig, String> {
   }
 
   Future<PageConfig> _fetch() async {
-    log('JSON_PAGE :: pageProvider: loading json from $_url');
+    log('[log] JSON_PAGE :: pageProvider: loading json from $_url');
     try {
       final http.Response response = await http.get(Uri.parse(_url));
       if (response.statusCode != 200) {
@@ -40,7 +40,11 @@ class PageNotifier extends FamilyAsyncNotifier<PageConfig, String> {
       _pingOnLoadUrl(feed.onLoadUrl);
       return feed;
     } catch (e, stack) {
-      log('pageProvider: error fetching page', error: e, stackTrace: stack);
+      log(
+        '[log] JSON_PAGE :: pageProvider: error fetching page',
+        error: e,
+        stackTrace: stack,
+      );
       rethrow;
     }
   }
@@ -242,7 +246,7 @@ class PageNotifier extends FamilyAsyncNotifier<PageConfig, String> {
         })
         .catchError((Object e, StackTrace stack) {
           log(
-            'pageProvider: onLoadUrl ping failed',
+            '[log] JSON_PAGE :: pageProvider: onLoadUrl ping failed',
             error: e,
             stackTrace: stack,
           );

@@ -61,7 +61,7 @@ class RealtimeNotifier
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
-      log('JSON_PAGE_RT :: app resumed — reconnecting realtime');
+      log('[log] JSON_PAGE_RT :: app resumed — reconnecting realtime');
       // Force an immediate reconnect of whichever transport is active. This
       // recovers from a silently-dropped socket after the device slept.
       _fbService?.reconnectNow();
@@ -75,12 +75,13 @@ class RealtimeNotifier
   ) {
     _wsService = RealtimeService(
       wsUrl: config.wsUrl,
-      onConnectionState: (connected) =>
-          log('JSON_PAGE_RT :: ws ${connected ? 'connected' : 'disconnected'}'),
+      onConnectionState: (connected) => log(
+        '[log] JSON_PAGE_RT :: ws ${connected ? 'connected' : 'disconnected'}',
+      ),
     );
     _wsService!.events.listen(
       (event) => controller.add(event),
-      onError: (e) => log('JSON_PAGE_RT :: ws event error: $e'),
+      onError: (e) => log('[log] JSON_PAGE_RT :: ws event error: $e'),
     );
     _wsService!.connect();
   }
@@ -95,12 +96,12 @@ class RealtimeNotifier
       token: fb.token,
       tokenUrl: fb.tokenUrl,
       onConnectionState: (connected) => log(
-        'JSON_PAGE_RT :: firebase ${connected ? 'connected' : 'disconnected'}',
+        '[log] JSON_PAGE_RT :: firebase ${connected ? 'connected' : 'disconnected'}',
       ),
     );
     _fbService!.events.listen(
       (event) => controller.add(event),
-      onError: (e) => log('JSON_PAGE_RT :: firebase event error: $e'),
+      onError: (e) => log('[log] JSON_PAGE_RT :: firebase event error: $e'),
     );
     _fbService!.connect();
   }
