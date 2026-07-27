@@ -118,40 +118,46 @@ class RenderView extends ConsumerWidget {
       });
     }
 
-    return Scaffold(
-      appBar: AppBar(
-        elevation: 0,
-        automaticallyImplyLeading: false,
-        title: Row(
-          children: [
-            feed.when(
-              data: (data) => _AppBarLogo(jsonLogo: data.logo, hostLogo: logo),
-              loading: () => _AppBarLogo(hostLogo: logo),
-              error: (_, _) => _AppBarLogo(hostLogo: logo),
-            ),
-            Expanded(
-              child: feed.when(
-                data: (data) => Text(
-                  data.title.isNotEmpty
-                      ? data.title
-                      : (title ?? defaultTitle ?? ''),
-                ),
-                loading: () => Text(title ?? defaultTitle ?? ''),
-                error: (_, _) => Text(title ?? defaultTitle ?? ''),
+    // When the app resumes from a long sleep, force every camera tile to
+    // reload its image. This recovers from a silently-dropped realtime
+    // connection (firebase/ws) that left the feed blank.
+    return _LifecycleReload(
+      child: Scaffold(
+        appBar: AppBar(
+          elevation: 0,
+          automaticallyImplyLeading: false,
+          title: Row(
+            children: [
+              feed.when(
+                data: (data) =>
+                    _AppBarLogo(jsonLogo: data.logo, hostLogo: logo),
+                loading: () => _AppBarLogo(hostLogo: logo),
+                error: (_, _) => _AppBarLogo(hostLogo: logo),
               ),
-            ),
-          ],
-        ),
-        actions: actions,
-      ),
-      body: SafeArea(
-        child: feed.when(
-          loading: () => const Center(child: CircularProgressIndicator()),
-          error: (error, stack) => _RenderError(
-            message: error.toString(),
-            onRetry: () => ref.read(pageProvider(url).notifier).refresh(),
+              Expanded(
+                child: feed.when(
+                  data: (data) => Text(
+                    data.title.isNotEmpty
+                        ? data.title
+                        : (title ?? defaultTitle ?? ''),
+                  ),
+                  loading: () => Text(title ?? defaultTitle ?? ''),
+                  error: (_, _) => Text(title ?? defaultTitle ?? ''),
+                ),
+              ),
+            ],
           ),
-          data: (data) => _renderByType(context, data, ref, reloadTick),
+          actions: actions,
+        ),
+        body: SafeArea(
+          child: feed.when(
+            loading: () => const Center(child: CircularProgressIndicator()),
+            error: (error, stack) => _RenderError(
+              message: error.toString(),
+              onRetry: () => ref.read(pageProvider(url).notifier).refresh(),
+            ),
+            data: (data) => _renderByType(context, data, ref, reloadTick),
+          ),
         ),
       ),
     );
@@ -261,6 +267,10 @@ class RenderView extends ConsumerWidget {
               (realtime != null && realtime!.poolInterval.inSeconds > 0)
               ? realtime!.poolInterval
               : Duration(seconds: data.widget.cameraPoolInterval),
+          pollFallbackInterval:
+              (realtime != null && realtime!.pollFallbackInterval.inSeconds > 0)
+              ? realtime!.pollFallbackInterval
+              : const Duration(seconds: 30),
           onLinkTap: onLinkTap,
           onRefresh: () => ref.read(pageProvider(url).notifier).refresh(),
           webViewHeaders: webViewHeaders,
@@ -272,6 +282,44 @@ class RenderView extends ConsumerWidget {
   }
 }
 
+/// Watches app lifecycle and bumps [cameraReloadTickProvider] when the app
+/// resumes from a long sleep. This forces every camera tile to reload its
+/// image, recovering from a silently-dropped realtime connection (firebase/
+/// ws) that left the feed blank while the device was asleep.
+class _LifecycleReload extends ConsumerStatefulWidget {
+  const _LifecycleReload({required this.child});
+
+  final Widget child;
+
+  @override
+  ConsumerState<_LifecycleReload> createState() => _LifecycleReloadState();
+}
+
+class _LifecycleReloadState extends ConsumerState<_LifecycleReload>
+    with WidgetsBindingObserver {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      ref.read(cameraReloadTickProvider.notifier).state++;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => widget.child;
+}
+
 class _RenderList extends StatelessWidget {
   const _RenderList({
     required this.widget,
@@ -279,6 +327,7 @@ class _RenderList extends StatelessWidget {
     this.logPoll,
     this.realtimeActive = false,
     this.poolInterval = const Duration(seconds: 60),
+    this.pollFallbackInterval = const Duration(seconds: 30),
     required this.onRefresh,
     this.onLinkTap,
     this.webViewHeaders,
@@ -307,6 +356,11 @@ class _RenderList extends StatelessWidget {
 
   /// Poll interval for `poll` mode, from [RealtimeConfig.poolInterval].
   final Duration poolInterval;
+
+  /// Safety-net poll interval used when realtime is active, from
+  /// [RealtimeConfig.pollFallbackInterval]. Forwarded to [RenderCameraWidget]
+  /// so images keep refreshing even if the realtime connection dies.
+  final Duration pollFallbackInterval;
   final Future<void> Function() onRefresh;
   final void Function(BuildContext context, LinkTarget target)? onLinkTap;
 
@@ -355,6 +409,7 @@ class _RenderList extends StatelessWidget {
                 cameraThumbPhoto: widget.cameraThumbPhoto,
                 reloadTimeSeconds: poolInterval.inSeconds,
                 externalTick: reloadTick,
+                pollFallbackInterval: pollFallbackInterval,
                 logPoll: logPoll,
                 onLinkTap: onLinkTap,
               ),

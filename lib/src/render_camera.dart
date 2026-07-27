@@ -28,6 +28,7 @@ class RenderCameraWidget extends StatefulWidget {
     this.reloadTimeSeconds = 60,
     this.externalTick = 0,
     this.realtimeActive = false,
+    this.pollFallbackInterval = const Duration(seconds: 30),
     this.logPoll,
     this.onLinkTap,
   });
@@ -59,6 +60,12 @@ class RenderCameraWidget extends StatefulWidget {
   /// Camera auto-reload interval in seconds (from page `cameraPoolInterval`).
   /// Defaults to 60 when not provided.
   final int reloadTimeSeconds;
+
+  /// Safety-net poll interval used when realtime is active. When the realtime
+  /// connection is alive this is just a fallback; when it dies (e.g. after a
+  /// long sleep) the images still refresh on this cadence so the feed never
+  /// goes permanently blank. From [RealtimeConfig.pollFallbackInterval].
+  final Duration pollFallbackInterval;
 
   /// When true, a realtime connection (firebase/ws) owns photo updates, so the
   /// periodic 60s poll timer is disabled — the image reloads only on a
@@ -202,11 +209,18 @@ class _RenderCameraWidgetState extends State<RenderCameraWidget> {
     if (!hasCamera) return;
 
     if (widget.realtimeActive) {
-      // Realtime (firebase/ws) owns photo updates; no poll timer.
-      debugPrint(
-        '[log] JSON_PAGE:: RenderCamera realtime active — poll disabled '
-        'for "${widget.item.title ?? ''}"',
-      );
+      // Realtime (firebase/ws) owns photo updates, but we still run a slow
+      // fallback poll (pollFallbackInterval) so the images keep refreshing
+      // even if the realtime connection silently dies (e.g. after a long
+      // sleep). This is a safety net, not the primary cadence.
+      final Duration fallback = widget.pollFallbackInterval;
+      if (fallback > Duration.zero) {
+        debugPrint(
+          '[log] JSON_PAGE:: RenderCamera realtime active — fallback poll '
+          'every ${fallback.inMilliseconds}ms for "${widget.item.title ?? ''}"',
+        );
+        _startFallbackTimer(fallback);
+      }
       return;
     }
 
@@ -276,6 +290,24 @@ class _RenderCameraWidgetState extends State<RenderCameraWidget> {
     });
   }
 
+  /// Safety-net timer used when realtime is active. Reloads every camera image
+  /// on [widget.pollFallbackInterval] so the feed keeps showing fresh photos
+  /// even if the realtime connection silently died (e.g. after a long sleep).
+  /// It bumps each camera's cache-bust tick and rebuilds, reusing the cached
+  /// image when the photo is unchanged.
+  Timer? _fallbackTimer;
+  void _startFallbackTimer(Duration interval) {
+    _fallbackTimer?.cancel();
+    _fallbackTimer = Timer.periodic(interval, (_) {
+      if (!mounted) return;
+      for (final PageChild c in widget.item.children) {
+        final String n = c.name ?? '';
+        if (n.isNotEmpty) _cameraTick[n] = (_cameraTick[n] ?? 0) + 1;
+      }
+      setState(() {});
+    });
+  }
+
   /// Local `last.json` fetch (legacy fallback path). Returns an empty map on
   /// failure so the caller falls back to reloading every camera.
   Future<Map<String, String>> _fetchLogLocal() async {
@@ -303,6 +335,7 @@ class _RenderCameraWidgetState extends State<RenderCameraWidget> {
   @override
   void dispose() {
     _localTimer?.cancel();
+    _fallbackTimer?.cancel();
     super.dispose();
   }
 

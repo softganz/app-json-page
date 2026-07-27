@@ -160,6 +160,15 @@ class RealtimeService {
     _reconnectTimer = null;
   }
 
+  /// Forces an immediate reconnect (e.g. when the app resumes from sleep).
+  /// Cancels any pending reconnect timer and connects right away.
+  void reconnectNow() {
+    if (_disposed) return;
+    log('JSON_PAGE_WS :: reconnectNow()');
+    _cancelReconnect();
+    connect();
+  }
+
   /// Closes the connection and stops reconnecting.
   void disconnect() {
     _disposed = true;
@@ -200,7 +209,8 @@ class FirebaseRealtimeService {
     required this.token,
     required this.tokenUrl,
     this.onConnectionState,
-  });
+    this.watchdogInterval = const Duration(seconds: 60),
+  }) : _currentToken = token;
 
   final String databaseURL;
   final String feedPath;
@@ -208,11 +218,26 @@ class FirebaseRealtimeService {
   final String tokenUrl;
   final void Function(bool connected)? onConnectionState;
 
+  /// Max idle time (no SSE data received) before we treat the connection as
+  /// dead and force a reconnect. Firebase sends periodic `:` keep-alive
+  /// comments, so a long silence means the socket was silently dropped (e.g.
+  /// after the device slept and the OS reclaimed the TCP connection).
+  final Duration watchdogInterval;
+
+  /// Current token; refreshed via [tokenUrl] when the stream closes with an
+  /// auth error or before reconnecting after a long sleep.
+  String _currentToken;
+
   final StreamController<RealtimeEvent> _eventController =
       StreamController<RealtimeEvent>.broadcast();
   http.Client? _client;
   StreamSubscription<String>? _sub;
   Timer? _reconnectTimer;
+  Timer? _watchdogTimer;
+
+  /// Monotonic counter of bytes/events seen; the watchdog compares against the
+  /// last value to detect a stalled (half-open) connection.
+  int _lastActivity = 0;
   bool _disposed = false;
   bool _connected = false;
   int _reconnectAttempts = 0;
@@ -224,7 +249,16 @@ class FirebaseRealtimeService {
     final String base = databaseURL.endsWith('/')
         ? databaseURL.substring(0, databaseURL.length - 1)
         : databaseURL;
-    return Uri.parse('$base/$feedPath.json?access_token=$token');
+    return Uri.parse('$base/$feedPath.json?access_token=$_currentToken');
+  }
+
+  /// Forces an immediate reconnect (e.g. when the app resumes from sleep).
+  /// Cancels any pending reconnect timer and connects right away.
+  void reconnectNow() {
+    if (_disposed) return;
+    log('JSON_PAGE_FB :: reconnectNow()');
+    _cancelReconnect();
+    connect();
   }
 
   Future<void> connect() async {
@@ -232,12 +266,26 @@ class FirebaseRealtimeService {
     _cancelReconnect();
     try {
       log(
-        'JSON_PAGE_FB :: connecting SSE to ${_streamUri.toString().replaceAll(token, '***')}',
+        'JSON_PAGE_FB :: connecting SSE to ${_streamUri.toString().replaceAll(_currentToken, '***')}',
       );
       _client = http.Client();
       final http.Request request = http.Request('GET', _streamUri)
         ..headers['Accept'] = 'text/event-stream';
       final http.StreamedResponse response = await _client!.send(request);
+      if (response.statusCode == 401 || response.statusCode == 403) {
+        // Auth error: the token likely expired (e.g. after a long sleep).
+        // Refresh it and reconnect with the new token.
+        log('JSON_PAGE_FB :: HTTP ${response.statusCode}, refreshing token');
+        final bool refreshed = await _refreshToken();
+        _client?.close();
+        _client = null;
+        if (refreshed) {
+          connect();
+        } else {
+          _scheduleReconnect();
+        }
+        return;
+      }
       if (response.statusCode != 200) {
         log('JSON_PAGE_FB :: HTTP ${response.statusCode}, will reconnect');
         _scheduleReconnect();
@@ -246,6 +294,8 @@ class FirebaseRealtimeService {
       _connected = true;
       onConnectionState?.call(true);
       _reconnectAttempts = 0;
+      _lastActivity = 0;
+      _startWatchdog();
       _sub = response.stream
           .transform(utf8.decoder)
           .transform(const LineSplitter())
@@ -265,6 +315,10 @@ class FirebaseRealtimeService {
   StringBuffer _dataBuf = StringBuffer();
 
   void _onLine(String line) {
+    // Firebase sends periodic `:` keep-alive comments. Treat any received
+    // line as activity so the watchdog knows the socket is still alive (and
+    // does NOT silently drop the connection after a long sleep).
+    _lastActivity++;
     if (line.startsWith('event:')) {
       _eventType = line.substring(6).trim();
       return;
@@ -281,6 +335,59 @@ class FirebaseRealtimeService {
       if (raw.isEmpty) return;
       _dispatch(type, raw);
     }
+  }
+
+  /// Starts the idle watchdog. If no SSE activity is seen within
+  /// [watchdogInterval], the connection is assumed dead (half-open after a
+  /// sleep) and a reconnect is forced.
+  void _startWatchdog() {
+    _stopWatchdog();
+    _watchdogTimer = Timer.periodic(watchdogInterval, (_) {
+      if (_disposed || !_connected) return;
+      // Compare against the activity counter captured at connect time.
+      if (_lastActivity <= _watchdogBaseline) {
+        log(
+          'JSON_PAGE_FB :: watchdog — no activity for '
+          '${watchdogInterval.inSeconds}s, forcing reconnect',
+        );
+        _connected = false;
+        onConnectionState?.call(false);
+        _scheduleReconnect();
+      } else {
+        _watchdogBaseline = _lastActivity;
+      }
+    });
+  }
+
+  void _stopWatchdog() {
+    _watchdogTimer?.cancel();
+    _watchdogTimer = null;
+  }
+
+  /// Activity counter value at the last watchdog tick. Used to detect a stall.
+  int _watchdogBaseline = 0;
+
+  /// Refreshes [_currentToken] via [tokenUrl]. Returns true when a new,
+  /// non-empty token was obtained. Used when the stream closes with an auth
+  /// error (e.g. token expired after a long sleep).
+  Future<bool> _refreshToken() async {
+    if (tokenUrl.isEmpty) return false;
+    try {
+      final http.Response res = await http.get(Uri.parse(tokenUrl));
+      if (res.statusCode != 200) return false;
+      final dynamic decoded = jsonDecode(utf8.decode(res.bodyBytes));
+      final String? newToken = decoded is Map
+          ? decoded['token'] as String?
+          : null;
+      if (newToken != null && newToken.isNotEmpty) {
+        _currentToken = newToken;
+        log('JSON_PAGE_FB :: token refreshed');
+        return true;
+      }
+    } catch (e) {
+      log('JSON_PAGE_FB :: token refresh error: $e');
+    }
+    return false;
   }
 
   void _dispatch(String? type, String raw) {
@@ -349,6 +456,7 @@ class FirebaseRealtimeService {
     log('JSON_PAGE_FB :: stream error', error: error, stackTrace: stack);
     _connected = false;
     onConnectionState?.call(false);
+    _stopWatchdog();
     _scheduleReconnect();
   }
 
@@ -356,6 +464,7 @@ class FirebaseRealtimeService {
     log('JSON_PAGE_FB :: stream closed');
     _connected = false;
     onConnectionState?.call(false);
+    _stopWatchdog();
     _scheduleReconnect();
   }
 
@@ -378,6 +487,7 @@ class FirebaseRealtimeService {
   void disconnect() {
     _disposed = true;
     _cancelReconnect();
+    _stopWatchdog();
     _sub?.cancel();
     _sub = null;
     _client?.close();

@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:developer';
 
+import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:json_page/src/models/realtime_config.dart';
@@ -24,7 +25,8 @@ final realtimeProvider =
     >(RealtimeNotifier.new);
 
 class RealtimeNotifier
-    extends FamilyStreamNotifier<RealtimeEvent, RealtimeConfig> {
+    extends FamilyStreamNotifier<RealtimeEvent, RealtimeConfig>
+    with WidgetsBindingObserver {
   RealtimeService? _wsService;
   FirebaseRealtimeService? _fbService;
 
@@ -42,7 +44,11 @@ class RealtimeNotifier
     } else if (config.isFirebase && config.firebase != null) {
       _startFirebase(config.firebase!, controller);
     }
+    // React to app lifecycle changes (e.g. resume after a long sleep) so the
+    // realtime connection is re-established and camera images reload.
+    WidgetsBinding.instance.addObserver(this);
     ref.onDispose(() {
+      WidgetsBinding.instance.removeObserver(this);
       _wsService?.dispose();
       _wsService = null;
       _fbService?.dispose();
@@ -50,6 +56,17 @@ class RealtimeNotifier
       controller.close();
     });
     return controller.stream;
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      log('JSON_PAGE_RT :: app resumed — reconnecting realtime');
+      // Force an immediate reconnect of whichever transport is active. This
+      // recovers from a silently-dropped socket after the device slept.
+      _fbService?.reconnectNow();
+      _wsService?.reconnectNow();
+    }
   }
 
   void _startWs(
