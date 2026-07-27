@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import 'package:json_page/src/models/page_model.dart';
@@ -12,9 +14,27 @@ import 'package:json_page/src/models/page_model.dart';
 /// Tapping a child invokes [onLinkTap] with a [LinkTarget] so the host can
 /// decide how to navigate (named route, in-app web view, external launch, ...).
 class RenderImageWidget extends StatelessWidget {
-  const RenderImageWidget({super.key, required this.item, this.onLinkTap});
+  const RenderImageWidget({
+    super.key,
+    required this.item,
+    this.onLinkTap,
+    this.pageMargin,
+    this.pagePadding,
+    this.itemPadding,
+  });
 
   final PageItem item;
+
+  /// Page-level insets (top-level `margin`/`padding`) applied around the whole
+  /// rendered content. Subtracted from the available width so a `photoWidth`
+  /// percentage is relative to the actual horizontal display area.
+  final EdgeInsets? pageMargin;
+
+  /// Page-level padding (top-level `padding`).
+  final EdgeInsets? pagePadding;
+
+  /// Item-level padding (declared on the `image` item).
+  final EdgeInsets? itemPadding;
 
   /// Called when a tappable child is tapped. When null, taps are ignored.
   final void Function(BuildContext context, LinkTarget target)? onLinkTap;
@@ -93,10 +113,10 @@ class RenderImageWidget extends StatelessWidget {
       // width so a `photoWidth`/`photoHeight` percentage is relative to it.
       return LayoutBuilder(
         builder: (context, constraints) {
-          final double w = constraints.maxWidth;
+          final double screenWidth = constraints.maxWidth;
           final ({double? width, double? height}) size = _resolveSize(
             children.first,
-            w,
+            screenWidth,
           );
           return _ImageTile(
             child: children.first,
@@ -112,13 +132,14 @@ class RenderImageWidget extends StatelessWidget {
 
     final double gap = item.gap ?? 0;
     final bool isGrid = item.layout == 'grid';
+    final bool isHorizontal = item.layout == 'horizontal';
 
     // In a horizontal ListView each item gets an unbounded width, so we read
     // the viewport width from an outer LayoutBuilder and compute fixed tile
     // width/height from `photoWidth`/`photoHeight` per child.
     return LayoutBuilder(
       builder: (context, constraints) {
-        final double w = constraints.maxWidth;
+        final double screenWidth = constraints.maxWidth;
 
         if (isGrid) {
           // Grid tiles are sized from the item-level `photoWidth`/`photoHeight`
@@ -126,7 +147,7 @@ class RenderImageWidget extends StatelessWidget {
           // width). Each child may still override its own size. The number of
           // columns auto-fits the tile width, or uses the explicit `columns`
           // attribute when provided (clamped to 1..6).
-          final double availableWidth = w - gap * 2;
+          final double availableWidth = screenWidth - gap * 2;
           final ({double? width, double? height}) base = _resolveSize(
             children.first,
             availableWidth,
@@ -189,7 +210,7 @@ class RenderImageWidget extends StatelessWidget {
                   Builder(
                     builder: (context) {
                       final ({double? width, double? height}) size =
-                          _resolveSize(child, w);
+                          _resolveSize(child, screenWidth);
                       return _ImageTile(
                         child: child,
                         fullWidth: false,
@@ -205,10 +226,112 @@ class RenderImageWidget extends StatelessWidget {
           );
         }
 
+        // When the layout is explicitly `horizontal` and at least one child's
+        // `photoWidth` is a percentage, scale each such image to that fraction
+        // of the available width and derive its height from the image's
+        // natural aspect ratio (height = width / aspectRatio) so the picture
+        // is not cropped. Aspect ratios are resolved asynchronously (and
+        // cached), so we wrap the row in a FutureBuilder.
+        final bool hasFractionWidth =
+            isHorizontal &&
+            children.any(
+              (c) =>
+                  _parsePhotoWidth(c.photoWidth ?? item.photoWidth).fraction !=
+                  null,
+            );
+
+        if (hasFractionWidth) {
+          final List<Future<double?>> ratioFutures = children.map((c) {
+            final ({double? pixels, double? fraction}) cw = _parsePhotoWidth(
+              c.photoWidth ?? item.photoWidth,
+            );
+            if (cw.fraction == null) return Future<double?>.value(null);
+            final NetworkImage img = _ImageTile._imageCache.putIfAbsent(
+              c.image!,
+              () => NetworkImage(c.image!),
+            );
+            return _aspectRatioOf(img);
+          }).toList();
+
+          return FutureBuilder<List<double?>>(
+            future: Future.wait(ratioFutures),
+            builder: (context, snap) {
+              final List<double?> ratios =
+                  snap.data ?? List<double?>.filled(children.length, null);
+              // The horizontal display area is the available width minus the
+              // row's own `gap` insets and the page/item insets (margin,
+              // padding) applied around the content. A `photoWidth` percentage
+              // is relative to this area, not the full screen width.
+              final double insetH =
+                  (pageMargin?.horizontal ?? 0) +
+                  (pagePadding?.horizontal ?? 0) +
+                  (itemPadding?.horizontal ?? 0);
+              final double displayWidth = (screenWidth - 2 * gap - insetH)
+                  .clamp(0, double.infinity);
+              // print(
+              // '[log] SOFTGANZ :: insetH=$insetH gap=$gap pageMargin=$pageMargin pagePadding=$pagePadding itemPadding=${itemPadding?.horizontal} screenWidth=$screenWidth displayWidth=$displayWidth',
+              // );
+              final List<({double width, double height})> sizes = [
+                for (int i = 0; i < children.length; i++)
+                  () {
+                    final PageChild c = children[i];
+                    final ({double? width, double? height}) s = _resolveSize(
+                      c,
+                      displayWidth,
+                    );
+                    final double width = s.width ?? 160;
+                    double height = s.height ?? 120;
+                    final ({double? pixels, double? fraction}) cw =
+                        _parsePhotoWidth(c.photoWidth ?? item.photoWidth);
+                    if (cw.fraction != null) {
+                      final double? r = ratios[i];
+                      if (r != null && r > 0) height = width / r;
+                    }
+                    return (width: width, height: height);
+                  }(),
+              ];
+              // All images share the same height as the first image so the
+              // row stays uniform; subsequent images are scaled to that
+              // height (their width follows from their own aspect ratio).
+              final double firstHeight = sizes.first.height;
+              for (int i = 1; i < sizes.length; i++) {
+                sizes[i] = (width: sizes[i].width, height: firstHeight);
+              }
+              final double rowHeight = firstHeight;
+              return Padding(
+                padding: EdgeInsets.symmetric(horizontal: gap),
+                child: SizedBox(
+                  height: rowHeight,
+                  child: ListView.separated(
+                    scrollDirection: Axis.horizontal,
+                    itemCount: children.length,
+                    separatorBuilder: (context, index) => SizedBox(width: gap),
+                    itemBuilder: (context, index) {
+                      final PageChild child = children[index];
+                      final ({double width, double height}) size = sizes[index];
+                      return _ImageTile(
+                        child: child,
+                        fullWidth: false,
+                        width: size.width,
+                        height: size.height,
+                        borderRadius: item.photoBorderRadius,
+                        onLinkTap: onLinkTap,
+                      );
+                    },
+                  ),
+                ),
+              );
+            },
+          );
+        }
+
         // Pre-compute each child's size so the row height can fit the tallest
         // tile (children may now have different heights).
         final List<({double width, double height})> sizes = children.map((c) {
-          final ({double? width, double? height}) s = _resolveSize(c, w);
+          final ({double? width, double? height}) s = _resolveSize(
+            c,
+            screenWidth,
+          );
           return (width: s.width ?? 160, height: s.height ?? 120);
         }).toList();
         final double rowHeight = sizes
@@ -241,6 +364,36 @@ class RenderImageWidget extends StatelessWidget {
       },
     );
   }
+}
+
+/// Resolves the natural aspect ratio (width / height) of a [NetworkImage].
+///
+/// The result is cached per URL so the image is only decoded once. When the
+/// image cannot be loaded the ratio falls back to 1.0 (square).
+final Map<String, double> _aspectRatioCache = {};
+
+Future<double?> _aspectRatioOf(NetworkImage image) {
+  final String key = image.url;
+  final double? cached = _aspectRatioCache[key];
+  if (cached != null) return Future<double?>.value(cached);
+  final Completer<double?> completer = Completer<double?>();
+  final ImageStream stream = image.resolve(ImageConfiguration.empty);
+  late ImageStreamListener listener;
+  listener = ImageStreamListener(
+    (ImageInfo info, bool synchronousCall) {
+      final double ratio = info.image.width / info.image.height;
+      _aspectRatioCache[key] = ratio;
+      completer.complete(ratio);
+      stream.removeListener(listener);
+    },
+    onError: (dynamic error, StackTrace? stackTrace) {
+      _aspectRatioCache[key] = 1.0;
+      completer.complete(1.0);
+      stream.removeListener(listener);
+    },
+  );
+  stream.addListener(listener);
+  return completer.future;
 }
 
 class _ImageTile extends StatelessWidget {

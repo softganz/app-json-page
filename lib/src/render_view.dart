@@ -264,6 +264,8 @@ class RenderView extends ConsumerWidget {
           onLinkTap: onLinkTap,
           onRefresh: () => ref.read(pageProvider(url).notifier).refresh(),
           webViewHeaders: webViewHeaders,
+          pageMargin: data.margin,
+          pagePadding: data.padding,
         );
         return _withMargin(data.margin, _withPadding(data.padding, list));
     }
@@ -280,10 +282,18 @@ class _RenderList extends StatelessWidget {
     required this.onRefresh,
     this.onLinkTap,
     this.webViewHeaders,
+    this.pageMargin,
+    this.pagePadding,
   });
 
   final PageWidget widget;
   final int reloadTick;
+
+  /// Page-level insets (top-level `margin`/`padding`) applied around the
+  /// whole rendered content. Forwarded to [RenderImageWidget] so a
+  /// `photoWidth` percentage is relative to the actual display area.
+  final EdgeInsets? pageMargin;
+  final EdgeInsets? pagePadding;
 
   /// Page-level `last.json` poll state (log-driven mode). When non-null, the
   /// per-camera widget reconciles against this shared map instead of running
@@ -320,7 +330,13 @@ class _RenderList extends StatelessWidget {
           tiles.add(
             _withPadding(
               item.padding,
-              RenderImageWidget(item: item, onLinkTap: onLinkTap),
+              RenderImageWidget(
+                item: item,
+                onLinkTap: onLinkTap,
+                pageMargin: pageMargin,
+                pagePadding: pagePadding,
+                itemPadding: item.padding,
+              ),
             ),
           );
         case 'sizebox':
