@@ -66,7 +66,7 @@ class RealtimeConfig {
   const RealtimeConfig({
     required this.type,
     this.wsUrl = '',
-    this.pollFallbackInterval = const Duration(milliseconds: 30000),
+    this.pollFallbackInterval = const Duration(seconds: 30),
     this.poolInterval = const Duration(seconds: 60),
     this.firebase,
   });
@@ -74,7 +74,7 @@ class RealtimeConfig {
   const RealtimeConfig.disabled()
     : type = 'poll',
       wsUrl = '',
-      pollFallbackInterval = const Duration(milliseconds: 30000),
+      pollFallbackInterval = const Duration(seconds: 30),
       poolInterval = const Duration(seconds: 60),
       firebase = null;
 

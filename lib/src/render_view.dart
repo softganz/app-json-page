@@ -271,6 +271,7 @@ class RenderView extends ConsumerWidget {
               (realtime != null && realtime!.pollFallbackInterval.inSeconds > 0)
               ? realtime!.pollFallbackInterval
               : const Duration(seconds: 30),
+          realtimeMode: realtime != null ? realtime!.type : 'poll',
           onLinkTap: onLinkTap,
           onRefresh: () => ref.read(pageProvider(url).notifier).refresh(),
           webViewHeaders: webViewHeaders,
@@ -328,6 +329,7 @@ class _RenderList extends StatelessWidget {
     this.realtimeActive = false,
     this.poolInterval = const Duration(seconds: 60),
     this.pollFallbackInterval = const Duration(seconds: 30),
+    this.realtimeMode = 'poll',
     required this.onRefresh,
     this.onLinkTap,
     this.webViewHeaders,
@@ -353,6 +355,10 @@ class _RenderList extends StatelessWidget {
   /// When true, realtime (firebase/ws) owns photo updates, so the per-camera
   /// 60s poll timer is disabled (passed down to [RenderCameraWidget]).
   final bool realtimeActive;
+
+  /// Active realtime transport name (`poll`, `firebase`, `ws`) forwarded to
+  /// [RenderCameraWidget] for log labelling.
+  final String realtimeMode;
 
   /// Poll interval for `poll` mode, from [RealtimeConfig.poolInterval].
   final Duration poolInterval;
@@ -401,6 +407,7 @@ class _RenderList extends StatelessWidget {
               item.padding,
               RenderCameraWidget(
                 item: item,
+                realtimeMode: realtimeMode,
                 realtimeActive: realtimeActive,
                 cameraPhoto: widget.cameraPhoto,
                 cameraLastPhoto: widget.cameraLastPhoto,

@@ -29,6 +29,7 @@ class RenderCameraWidget extends StatefulWidget {
     this.externalTick = 0,
     this.realtimeActive = false,
     this.pollFallbackInterval = const Duration(seconds: 30),
+    this.realtimeMode = 'poll',
     this.logPoll,
     this.onLinkTap,
   });
@@ -72,6 +73,11 @@ class RenderCameraWidget extends StatefulWidget {
   /// `photo.new` event (via [externalTick] or a child's `time` change). In
   /// `poll` mode this stays false and the timer runs as a fallback.
   final bool realtimeActive;
+
+  /// The active realtime transport name (`poll`, `firebase`, `ws`) used only
+  /// for log labelling so debug output reflects the actual mode instead of a
+  /// hard-coded "Poll mode" string.
+  final String realtimeMode;
 
   /// External tick that forces an immediate image reload when it changes.
   /// Driven by realtime photo.new events (e.g. Firebase RTDB push) so the
@@ -139,7 +145,7 @@ class _RenderCameraWidgetState extends State<RenderCameraWidget> {
         // cached image — scrolling never triggers a reload for them.
         _cameraTick[name] = (_cameraTick[name] ?? 0) + 1;
         debugPrint(
-          '[log] JSON_PAGE:: RenderCamera update image '
+          '[log] JSON_PAGE:: ${widget.realtimeMode} mode RenderCamera update image '
           '"$name" updateAt $prev -> $value',
         );
       }
@@ -179,7 +185,7 @@ class _RenderCameraWidgetState extends State<RenderCameraWidget> {
         if (mounted) {
           setState(() {});
           debugPrint(
-            '[log] JSON_PAGE:: RenderCamera firebase realtime reload '
+            '[log] JSON_PAGE:: ${widget.realtimeMode} mode RenderCamera reload '
             '(time=${child.time}) for camera "$n"',
           );
         }
@@ -216,7 +222,7 @@ class _RenderCameraWidgetState extends State<RenderCameraWidget> {
       final Duration fallback = widget.pollFallbackInterval;
       if (fallback > Duration.zero) {
         debugPrint(
-          '[log] JSON_PAGE:: RenderCamera realtime active — fallback poll '
+          '[log] JSON_PAGE:: ${widget.realtimeMode} mode RenderCamera realtime active — fallback poll '
           'every ${fallback.inMilliseconds}ms for "${widget.item.title ?? ''}"',
         );
         _startFallbackTimer(fallback);
@@ -236,7 +242,7 @@ class _RenderCameraWidgetState extends State<RenderCameraWidget> {
     } else {
       // No shared poll available: fall back to a local timer (legacy path).
       debugPrint(
-        '[log] JSON_PAGE:: RenderCamera start local auto-reload every '
+        '[log] JSON_PAGE:: ${widget.realtimeMode} mode RenderCamera start local auto-reload every '
         '${widget.reloadTimeSeconds > 0 ? widget.reloadTimeSeconds : 60}s '
         'for "${widget.item.title ?? ''}"',
       );
@@ -254,7 +260,7 @@ class _RenderCameraWidgetState extends State<RenderCameraWidget> {
     if (!mounted) return;
     if (changed.isEmpty) {
       debugPrint(
-        '[log] JSON_PAGE:: RenderCamera poll '
+        '[log] JSON_PAGE:: ${widget.realtimeMode} mode RenderCamera '
         'no camera changed for "${widget.item.title ?? ''}"',
       );
       setState(() {});
@@ -268,7 +274,7 @@ class _RenderCameraWidgetState extends State<RenderCameraWidget> {
           ? _buildUrl(child)
           : '${widget.cameraPhoto}${widget.cameraLastPhoto}$name.jpg';
       debugPrint(
-        '[log] JSON_PAGE:: RenderCamera updating image "$name" -> $url',
+        '[log] JSON_PAGE:: ${widget.realtimeMode} mode RenderCamera updating image "$name" -> $url',
       );
     }
     setState(() {});
@@ -388,7 +394,9 @@ class _RenderCameraWidgetState extends State<RenderCameraWidget> {
     final String name = child.name ?? '';
     if (_loadedUrl[name] != url) {
       _loadedUrl[name] = url;
-      debugPrint('[log] JSON_PAGE:: RenderCamera load image "$name" -> $url');
+      debugPrint(
+        '[log] JSON_PAGE:: ${widget.realtimeMode} mode RenderCamera load image "$name" -> $url',
+      );
     }
     final Widget image = Image.network(
       url,
@@ -405,7 +413,7 @@ class _RenderCameraWidgetState extends State<RenderCameraWidget> {
         if (canFallback) {
           // Thumbnail missing → load the full image instead.
           debugPrint(
-            '[log] JSON_PAGE:: RenderCamera thumbnail missing for "$name", '
+            '[log] JSON_PAGE:: ${widget.realtimeMode} mode RenderCamera thumbnail missing for "$name", '
             'fallback to full -> $fullUrl',
           );
           return Image.network(
