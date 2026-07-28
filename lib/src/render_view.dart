@@ -446,9 +446,21 @@ class _RenderList extends StatelessWidget {
       return tiles.single;
     }
 
+    // Convert tiles to slivers so the outer scroll view can keep a stable
+    // scroll position when the content height changes (e.g. images load).
+    // Using a plain ListView causes the scroll offset to be reset to 0 when
+    // a child rebuilds with a different intrinsic height, which manifests as
+    // flicker and the inability to scroll back to the very top.
+    final List<Widget> slivers = tiles.map((Widget tile) {
+      return SliverToBoxAdapter(child: tile);
+    }).toList();
+
     return RefreshIndicator(
       onRefresh: onRefresh,
-      child: ListView(children: tiles),
+      child: CustomScrollView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        slivers: slivers,
+      ),
     );
   }
 }
