@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:http/http.dart' as http;
 
 import 'package:json_page/src/models/page_model.dart';
+import 'package:json_page/src/services/image_cache_service.dart';
 
 /// Async provider that fetches and parses a page JSON file (e.g. `home.json`).
 ///
@@ -19,6 +20,7 @@ final pageProvider =
 
 class PageNotifier extends FamilyAsyncNotifier<PageConfig, String> {
   late final String _url;
+  final ImageCacheService _cacheService = ImageCacheService();
 
   @override
   Future<PageConfig> build(String url) async {
@@ -37,6 +39,10 @@ class PageNotifier extends FamilyAsyncNotifier<PageConfig, String> {
       final Map<String, dynamic> json =
           jsonDecode(_stripComments(raw)) as Map<String, dynamic>;
       final PageConfig feed = PageConfig.fromJson(json);
+
+      // Pre-cache all images from the page config (fire-and-forget)
+      _preCacheImages(feed);
+
       _pingOnLoadUrl(feed.onLoadUrl);
       return feed;
     } catch (e, stack) {
@@ -46,6 +52,25 @@ class PageNotifier extends FamilyAsyncNotifier<PageConfig, String> {
         stackTrace: stack,
       );
       rethrow;
+    }
+  }
+
+  /// Pre-cache all images found in the page config so they are available
+  /// instantly when the UI renders them.
+  Future<void> _preCacheImages(PageConfig config) async {
+    try {
+      for (final PageItem item in config.widget.items.values) {
+        for (final PageChild child in item.children) {
+          if (child.image != null && child.image!.isNotEmpty) {
+            await _cacheService.getCachedImageFile(child.image!);
+          }
+        }
+      }
+    } catch (e) {
+      log(
+        '[log] JSON_PAGE :: pageProvider: error pre-caching images',
+        error: e,
+      );
     }
   }
 

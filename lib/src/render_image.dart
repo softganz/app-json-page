@@ -1,8 +1,10 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 
 import 'package:json_page/src/models/page_model.dart';
+import 'package:json_page/src/services/image_cache_service.dart';
 
 /// Renders a feed item of `type: image`.
 ///
@@ -246,7 +248,7 @@ class RenderImageWidget extends StatelessWidget {
               c.photoWidth ?? item.photoWidth,
             );
             if (cw.fraction == null) return Future<double?>.value(null);
-            final NetworkImage img = _ImageTile._imageCache.putIfAbsent(
+            final NetworkImage img = _tileImageCache.putIfAbsent(
               c.image!,
               () => NetworkImage(c.image!),
             );
@@ -396,7 +398,15 @@ Future<double?> _aspectRatioOf(NetworkImage image) {
   return completer.future;
 }
 
-class _ImageTile extends StatelessWidget {
+/// Stable `NetworkImage` per URL. Non-camera images never change, so we
+/// memoize the provider in a static map keyed by URL. This guarantees the
+/// same `ImageProvider` instance is reused across rebuilds and scroll
+/// remounts, so the `ImageCache` keeps serving the cached bytes and the
+/// image is never re-fetched just because the widget was rebuilt or scrolled
+/// off-screen and back.
+final Map<String, NetworkImage> _tileImageCache = {};
+
+class _ImageTile extends StatefulWidget {
   const _ImageTile({
     required this.child,
     required this.fullWidth,
@@ -413,31 +423,74 @@ class _ImageTile extends StatelessWidget {
   final double? borderRadius;
   final void Function(BuildContext context, LinkTarget target)? onLinkTap;
 
-  /// Stable `NetworkImage` per URL. Non-camera images never change, so we
-  /// memoize the provider in a static map keyed by URL. This guarantees the
-  /// same `ImageProvider` instance is reused across rebuilds and scroll
-  /// remounts, so the `ImageCache` keeps serving the cached bytes and the
-  /// image is never re-fetched just because the widget was rebuilt or scrolled
-  /// off-screen and back.
-  static final Map<String, NetworkImage> _imageCache = {};
+  @override
+  State<_ImageTile> createState() => _ImageTileState();
+}
 
-  NetworkImage _resolveImage() {
-    final String url = child.image!;
-    return _imageCache.putIfAbsent(url, () => NetworkImage(url));
+class _ImageTileState extends State<_ImageTile> {
+  /// Cached file path for the current image (null = not yet resolved).
+  String? _cachedFilePath;
+
+  @override
+  void initState() {
+    super.initState();
+    _resolveCachedImage();
+  }
+
+  @override
+  void didUpdateWidget(_ImageTile oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.child.image != widget.child.image) {
+      _cachedFilePath = null;
+      _resolveCachedImage();
+    }
+  }
+
+  Future<void> _resolveCachedImage() async {
+    final String? imageUrl = widget.child.image;
+    if (imageUrl == null || imageUrl.isEmpty) return;
+
+    try {
+      final File? cachedFile = await ImageCacheService().getCachedImageFile(
+        imageUrl,
+      );
+      if (mounted) {
+        setState(() {
+          _cachedFilePath = cachedFile?.path;
+        });
+      }
+    } catch (_) {
+      // ignore — fall back to network
+    }
+  }
+
+  NetworkImage _resolveNetworkImage() {
+    final String url = widget.child.image!;
+    return _tileImageCache.putIfAbsent(url, () => NetworkImage(url));
+  }
+
+  /// Returns the best available ImageProvider:
+  ///   - cached file on disk → FileImage (instant, no network)
+  ///   - otherwise           → NetworkImage (fetch from server)
+  ImageProvider _resolveImageProvider() {
+    if (_cachedFilePath != null) {
+      return FileImage(File(_cachedFilePath!));
+    }
+    return _resolveNetworkImage();
   }
 
   Future<void> _onTap(BuildContext context) async {
-    final void Function(BuildContext, LinkTarget)? handler = onLinkTap;
+    final void Function(BuildContext, LinkTarget)? handler = widget.onLinkTap;
     if (handler == null) return;
     // A `route` navigates to a named route in the app (e.g. "/about").
-    final String? route = child.route;
+    final String? route = widget.child.route;
     if (route != null && route.isNotEmpty) {
       handler(
         context,
         LinkTarget(
           route: route,
-          routeArgs: child.routeArgs,
-          title: child.title,
+          routeArgs: widget.child.routeArgs,
+          title: widget.child.title,
         ),
       );
       return;
@@ -445,48 +498,72 @@ class _ImageTile extends StatelessWidget {
 
     // A `webViewUrl` opens the in-app WebScreen; otherwise launch `url`
     // externally when present.
-    final String? webViewUrl = child.webViewUrl;
+    final String? webViewUrl = widget.child.webViewUrl;
     if (webViewUrl != null && webViewUrl.isNotEmpty) {
-      handler(context, LinkTarget(webViewUrl: webViewUrl, title: child.title));
+      handler(
+        context,
+        LinkTarget(webViewUrl: webViewUrl, title: widget.child.title),
+      );
       return;
     }
 
-    final String? url = child.url;
+    final String? url = widget.child.url;
     if (url == null || url.isEmpty) return;
-    handler(context, LinkTarget(url: url, title: child.title));
+    handler(context, LinkTarget(url: url, title: widget.child.title));
   }
 
   @override
   Widget build(BuildContext context) {
     final Widget image = Image(
-      image: _resolveImage(),
+      image: _resolveImageProvider(),
       fit: BoxFit.cover,
       gaplessPlayback: true,
       loadingBuilder: (context, widget, loadingProgress) {
         if (loadingProgress == null) return widget;
         return const Center(child: CircularProgressIndicator());
       },
-      errorBuilder: (context, error, stackTrace) =>
-          const Center(child: Icon(Icons.broken_image, size: 40)),
+      errorBuilder: (context, error, stackTrace) {
+        // If cached file failed, fall back to network
+        if (_cachedFilePath != null) {
+          // Schedule a retry without cache
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) {
+              setState(() {
+                _cachedFilePath = null;
+              });
+            }
+          });
+        }
+        return const Center(child: Icon(Icons.broken_image, size: 40));
+      },
     );
 
-    final Widget body = fullWidth
-        ? (width == null && height == null
+    final Widget body = widget.fullWidth
+        ? (widget.width == null && widget.height == null
               ? image
-              : SizedBox(width: width, height: height, child: image))
-        : SizedBox(width: width ?? 160, height: height ?? 120, child: image);
+              : SizedBox(
+                  width: widget.width,
+                  height: widget.height,
+                  child: image,
+                ))
+        : SizedBox(
+            width: widget.width ?? 160,
+            height: widget.height ?? 120,
+            child: image,
+          );
 
     // Round when the item (`photoBorderRadius`) or the child (`borderRadius`)
     // declares a radius. The item-level value takes precedence.
-    final double? radius = borderRadius ?? child.borderRadius;
+    final double? radius = widget.borderRadius ?? widget.child.borderRadius;
     final Widget rounded = radius == null
         ? body
         : ClipRRect(borderRadius: BorderRadius.circular(radius), child: body);
 
     final bool tappable =
-        (child.route != null && child.route!.isNotEmpty) ||
-        (child.url != null && child.url!.isNotEmpty) ||
-        (child.webViewUrl != null && child.webViewUrl!.isNotEmpty);
+        (widget.child.route != null && widget.child.route!.isNotEmpty) ||
+        (widget.child.url != null && widget.child.url!.isNotEmpty) ||
+        (widget.child.webViewUrl != null &&
+            widget.child.webViewUrl!.isNotEmpty);
 
     if (!tappable) {
       return rounded;

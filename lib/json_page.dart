@@ -11,6 +11,7 @@ export 'src/models/realtime_config.dart';
 export 'src/providers/page_provider.dart';
 export 'src/providers/realtime_provider.dart';
 export 'src/services/realtime_service.dart';
+export 'src/services/image_cache_service.dart';
 export 'src/render_view.dart';
 export 'src/render_image.dart';
 export 'src/render_camera.dart';
