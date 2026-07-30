@@ -431,6 +431,9 @@ class _ImageTileState extends State<_ImageTile> {
   /// Cached file path for the current image (null = not yet resolved).
   String? _cachedFilePath;
 
+  /// Whether a silent server update has been triggered for this image URL.
+  String? _silentUpdatedUrl;
+
   @override
   void initState() {
     super.initState();
@@ -442,6 +445,7 @@ class _ImageTileState extends State<_ImageTile> {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.child.image != widget.child.image) {
       _cachedFilePath = null;
+      _silentUpdatedUrl = null;
       _resolveCachedImage();
     }
   }
@@ -458,9 +462,37 @@ class _ImageTileState extends State<_ImageTile> {
         setState(() {
           _cachedFilePath = cachedFile?.path;
         });
+        // After showing cache, silently check server for newer version
+        _silentUpdateFromServer(imageUrl);
       }
     } catch (_) {
       // ignore — fall back to network
+    }
+  }
+
+  /// After showing the cached image, silently check the server.
+  /// If a newer version exists, update the cache and swap the provider
+  /// without any loading indicator (gaplessPlayback handles the transition).
+  Future<void> _silentUpdateFromServer(String imageUrl) async {
+    // Only run once per URL to avoid repeated calls
+    if (_silentUpdatedUrl == imageUrl) return;
+    _silentUpdatedUrl = imageUrl;
+
+    try {
+      final File? freshFile = await ImageCacheService().silentUpdateFromServer(
+        imageUrl,
+      );
+
+      if (!mounted) return;
+
+      // Only update if the file actually changed (different path)
+      if (freshFile != null && freshFile.path != _cachedFilePath) {
+        setState(() {
+          _cachedFilePath = freshFile.path;
+        });
+      }
+    } catch (_) {
+      // Silent fail — keep showing cached/network version
     }
   }
 

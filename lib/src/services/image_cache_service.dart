@@ -1,3 +1,4 @@
+import 'dart:developer';
 import 'dart:io';
 
 import 'package:flutter_cache_manager/flutter_cache_manager.dart';
@@ -44,7 +45,27 @@ class ImageCacheService {
       return downloadedFile.file;
     } catch (e) {
       // Log the error and return null
-      print('[IMAGE_CACHE_SERVICE] Error caching image $imageUrl: $e');
+      log('[IMAGE_CACHE_SERVICE] Error caching image $imageUrl: $e');
+      return null;
+    }
+  }
+
+  /// Silently check the server for a newer version of a cached image.
+  ///
+  /// Uses the cache manager's built-in ETag/Last-Modified handling:
+  /// - If the server has a newer version → downloads, updates cache, returns the new file.
+  /// - If the server version is unchanged → returns the existing cached file.
+  /// - If the image was not cached before → downloads and caches it.
+  ///
+  /// Returns the (possibly updated) cached file, or null on failure.
+  Future<File?> silentUpdateFromServer(String imageUrl) async {
+    try {
+      // downloadFile checks ETag/Last-Modified with the server.
+      // If unchanged, returns the existing cached file without re-downloading.
+      final fileInfo = await _cacheManager.downloadFile(imageUrl);
+      return fileInfo.file;
+    } catch (e) {
+      log('[IMAGE_CACHE_SERVICE] Error silently updating $imageUrl: $e');
       return null;
     }
   }
@@ -57,7 +78,7 @@ class ImageCacheService {
       final fileInfo = await _cacheManager.getFileFromCache(imageUrl);
       return fileInfo != null;
     } catch (e) {
-      print(
+      log(
         '[IMAGE_CACHE_SERVICE] Error checking if image is cached $imageUrl: $e',
       );
       return false;
@@ -71,7 +92,7 @@ class ImageCacheService {
     try {
       await _cacheManager.emptyCache();
     } catch (e) {
-      print('[IMAGE_CACHE_SERVICE] Error clearing cache: $e');
+      log('[IMAGE_CACHE_SERVICE] Error clearing cache: $e');
     }
   }
 }
